@@ -1,0 +1,26 @@
+[
+  {
+    "id": "PAY-42",
+    "project": "PAY",
+    "title": "Checkout card payment timeout",
+    "text": "Resolved by increasing the gateway timeout and replaying the payment confirmation safely.",
+    "resolved": true,
+    "url": "https://jira.example.local/browse/PAY-42"
+  },
+  {
+    "id": "PAY-43",
+    "project": "PAY",
+    "title": "Checkout timeout after payment confirmation",
+    "text": "Investigating intermittent timeout reports from the payment gateway.",
+    "resolved": false,
+    "url": "https://jira.example.local/browse/PAY-43"
+  },
+  {
+    "id": "OPS-9",
+    "project": "OPS",
+    "title": "Checkout card payment timeout",
+    "text": "This cross-project record must be excluded by the trusted project filter.",
+    "resolved": true,
+    "url": "https://jira.example.local/browse/OPS-9"
+  }
+]

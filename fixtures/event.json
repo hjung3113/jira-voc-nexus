@@ -1,0 +1,8 @@
+{
+  "event_id": "event-001",
+  "issue_key": "VOC-100",
+  "project": "PAY",
+  "summary": "Checkout card payment timeout",
+  "description": "Customers see a timeout after submitting a card payment during checkout.",
+  "labels": ["customer-report"]
+}

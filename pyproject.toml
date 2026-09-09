@@ -1,0 +1,9 @@
+[project]
+name = "jira-voc-nexus"
+version = "0.1.0"
+description = "Local dry-run Jira VOC triage proposal scaffold"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.unittest]
+start-directory = "tests"
