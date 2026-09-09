@@ -29,6 +29,14 @@
   newlines so markers stay single-line and unambiguous.
 - Repo docs and agent rules are now English (AGENTS.md, README.md, all of
   docs/). `CLAUDE.md` remains a relative symlink to AGENTS.md.
+- **Issue #1 applied as design reference** (this session): the production
+  Knowledge Retrieval Platform research (Haystack + OpenSearch hybrid/RRF +
+  BGE-M3/reranker + PostgreSQL knowledge registry, canonical NormalizedIssue
+  contract, Problem→Issue→Resolution retrieval rule, Wiki metadata contract,
+  evaluation gate) is now recorded in [docs/RAG_DESIGN.md](docs/RAG_DESIGN.md)
+  with an acceptance-criteria mapping. It is explicitly proposed-not-adopted;
+  [docs/TOOLING_DECISION.md](docs/TOOLING_DECISION.md) carries the boundary
+  and the current runtime is unchanged.
 - Replay caveat: an event first processed before format v1 keeps its
   originally stored comment/result when replayed (replay identity is
   `event_id` + payload fingerprint and does not include the renderer version).

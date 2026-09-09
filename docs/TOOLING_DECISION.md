@@ -57,7 +57,15 @@ ACL principal are secured.
 5. Only expand connector/eval/orchestration scope once the above data shows
    the need
 
+## Proposed retrieval platform (not adopted)
+
+[RAG_DESIGN.md](RAG_DESIGN.md) records the proposed production retrieval
+platform from issue #1 — Haystack, OpenSearch (BM25/Nori + vectors + RRF),
+BGE-M3, BGE-Reranker-v2-m3, and a PostgreSQL knowledge registry. It is a
+design reference only: none of it is installed, and adoption happens only
+after the evaluation gate defined there (golden set, Recall/MRR/nDCG,
+latency, ACL-leakage = 0) is measured through the implementation slices.
+
 External model fallback or automatic production deployment must never be
 routed around by a tooling choice. Real Jira comment/label writes remain a
-separate, approved integration slice and are not part of the current
-decision.
+separate, approved integration slice and are not part of the current decision.
