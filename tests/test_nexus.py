@@ -14,7 +14,7 @@ from unittest import mock
 from nexus.errors import EngineError, ProposalValidationError, StateConflictError
 from nexus.models import parse_corpus, parse_event
 from nexus.opencode import OpenCodeEngine
-from nexus.proposals import ALLOWED_LABELS, validate_proposal
+from nexus.proposals import ALLOWED_LABELS, render_comment, render_issue, validate_proposal
 from nexus.retrieval import retrieve
 from nexus.service import FixtureEngine, NexusService
 
@@ -357,6 +357,161 @@ class NexusTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0], results[1])
         self.assertEqual(engine.calls, 1)
+
+    def test_comment_marker_is_last_line_and_labels_sorted(self):
+        event = parse_event(self.event)
+        evidence = parse_corpus(self.corpus)
+        proposal = {
+            "recommendations": [
+                {
+                    "text": "Review the resolved guidance for PAY-42.",
+                    "evidence_ids": ["PAY-42", "PAY-43"],
+                }
+            ],
+            "labels": ["possible-duplicate", "needs-triage"],
+        }
+        comment = render_comment(proposal, evidence, event.event_id)
+        lines = comment.split("\n")
+        self.assertEqual(lines[0], "VOC triage recommendations (dry-run):")
+        recommendation_index = lines.index("- Review the resolved guidance for PAY-42.")
+        evidence_index = lines.index("Evidence:")
+        pay42_index = lines.index("- PAY-42: https://jira.example.local/browse/PAY-42")
+        pay43_index = lines.index("- PAY-43: https://jira.example.local/browse/PAY-43")
+        labels_index = lines.index("Labels: needs-triage, possible-duplicate")
+        self.assertLess(recommendation_index, evidence_index)
+        self.assertLess(evidence_index, pay42_index)
+        self.assertLess(pay42_index, pay43_index)
+        self.assertLess(pay43_index, labels_index)
+        self.assertLess(labels_index, len(lines) - 1)
+        self.assertEqual(lines[-1], "voc-nexus-comment|v1|" + event.event_id)
+        self.assertFalse(comment.endswith("\n"))
+
+    def test_renderers_reject_marker_unsafe_event_id(self):
+        event = parse_event(self.event)
+        evidence = parse_corpus(self.corpus)
+        proposal = {"recommendations": [], "labels": ["needs-triage"]}
+        for unsafe_id in ("foo\nbar", "foo|bar", "foo\rbar", None):
+            with self.subTest(unsafe_id=unsafe_id):
+                with self.assertRaises(ProposalValidationError):
+                    render_comment(proposal, evidence, unsafe_id)
+        broken_event = SimpleNamespace(
+            event_id="foo\nbar", issue_key="VOC-100", project="PAY", summary="s"
+        )
+        with self.assertRaises(ProposalValidationError):
+            render_issue(broken_event, proposal, evidence)
+
+    def test_comment_needs_triage_branch_structure(self):
+        event = parse_event(self.event)
+        proposal = {"recommendations": [], "labels": ["needs-triage"]}
+        comment = render_comment(proposal, [], event.event_id)
+        lines = comment.split("\n")
+        self.assertIn("No grounded recommendation found; manual triage required.", lines)
+        self.assertNotIn("Evidence:", lines)
+        self.assertEqual(lines[-1], "voc-nexus-comment|v1|" + event.event_id)
+
+    def test_comment_omits_urls_that_fail_the_safe_url_gate(self):
+        event = parse_event(self.event)
+        corpus = json.loads(json.dumps(self.corpus))
+        corpus[0]["url"] = "javascript:alert(1)"
+        evidence = [doc for doc in parse_corpus(corpus) if doc.id == "PAY-42"]
+        proposal = {
+            "recommendations": [
+                {"text": "Review the resolved guidance for PAY-42.", "evidence_ids": ["PAY-42"]}
+            ],
+            "labels": ["possible-duplicate"],
+        }
+        comment = render_comment(proposal, evidence, event.event_id)
+        self.assertNotIn("javascript:", comment)
+        self.assertNotIn("Evidence:", comment)
+
+    def test_issue_summary_truncation_boundary(self):
+        base = dict(self.event)
+        for length in (73, 74, 75, 120):
+            with self.subTest(length=length):
+                base["summary"] = "x" * length
+                event = parse_event(base)
+                issue = render_issue(event, {"recommendations": [], "labels": ["needs-triage"]}, [])
+                self.assertEqual(issue["summary"], ("[VOC] " + "x" * length)[:80])
+
+    def test_issue_description_section_order_and_marker(self):
+        event = parse_event(self.event)
+        evidence = retrieve(event, parse_corpus(self.corpus))
+        proposal = {
+            "recommendations": [
+                {"text": "Review the resolved guidance for PAY-42.", "evidence_ids": ["PAY-42"]}
+            ],
+            "labels": ["possible-duplicate"],
+        }
+        issue = render_issue(event, proposal, evidence)
+        self.assertEqual(set(issue), {"summary", "description", "marker"})
+        description = issue["description"]
+        self.assertEqual(issue["marker"], "voc-nexus-issue|v1|" + event.event_id)
+        lines = description.split("\n")
+        self.assertEqual(lines[0], "Context:")
+        self.assertEqual(lines[-1], issue["marker"])
+        self.assertFalse(description.endswith("\n"))
+        context_index = lines.index("Context:")
+        recommendations_index = lines.index("Recommendations:")
+        evidence_index = lines.index("Evidence:")
+        labels_index = next(i for i, line in enumerate(lines) if line.startswith("Labels:"))
+        self.assertLess(context_index, recommendations_index)
+        self.assertLess(recommendations_index, evidence_index)
+        self.assertLess(evidence_index, labels_index)
+        self.assertLess(labels_index, len(lines) - 1)
+        self.assertIn("- event_id: " + event.event_id, lines)
+        self.assertIn("- issue_key: " + event.issue_key, lines)
+        self.assertIn("- project: " + event.project, lines)
+
+    def test_issue_no_recommendation_branch(self):
+        event = parse_event(self.event)
+        proposal = {"recommendations": [], "labels": ["needs-triage"]}
+        issue = render_issue(event, proposal, [])
+        self.assertIn(
+            "No grounded recommendation found; manual triage required.",
+            issue["description"],
+        )
+        self.assertNotIn("Evidence:", issue["description"])
+        self.assertEqual(issue["description"].split("\n")[-1], issue["marker"])
+
+    def test_issue_omits_urls_that_fail_the_safe_url_gate(self):
+        event = parse_event(self.event)
+        corpus = json.loads(json.dumps(self.corpus))
+        corpus[0]["url"] = "javascript:alert(1)"
+        evidence = [doc for doc in parse_corpus(corpus) if doc.id == "PAY-42"]
+        proposal = {
+            "recommendations": [
+                {"text": "Review the resolved guidance for PAY-42.", "evidence_ids": ["PAY-42"]}
+            ],
+            "labels": ["possible-duplicate"],
+        }
+        issue = render_issue(event, proposal, evidence)
+        self.assertNotIn("javascript:", issue["description"])
+        self.assertNotIn("Evidence:", issue["description"])
+
+    def test_public_result_has_issue_key_and_unchanged_dry_run_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = CountingFixture()
+            service = NexusService(str(Path(directory) / "state.sqlite3"), engine=engine)
+            result = service.process(self.event, self.corpus)
+
+        self.assertEqual(
+            set(result),
+            {
+                "comment", "demo_only", "dry_run", "engine", "event_id", "issue",
+                "issue_key", "labels", "published", "recommendations", "state",
+            },
+        )
+        self.assertEqual(
+            result["comment"].split("\n")[-1],
+            "voc-nexus-comment|v1|" + result["event_id"],
+        )
+        self.assertEqual(set(result["issue"]), {"summary", "description", "marker"})
+        self.assertEqual(result["issue"]["marker"], "voc-nexus-issue|v1|" + result["event_id"])
+        self.assertEqual(result["issue"]["description"].split("\n")[-1], result["issue"]["marker"])
+        self.assertTrue(result["issue"]["summary"].startswith("[VOC] "))
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(result["published"])
+        self.assertEqual(result["state"], "prepared")
 
 
 if __name__ == "__main__":

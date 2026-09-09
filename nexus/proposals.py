@@ -89,26 +89,87 @@ def _safe_http_url(value: str) -> Optional[str]:
     return value
 
 
-def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document]) -> str:
-    """Render only validated recommendation text and valid HTTP(S) URLs."""
-
-    evidence_by_id = {document.id: document for document in evidence}
-    lines = ["VOC triage recommendations (dry-run):", ""]
+def _evidence_gate(recommendations: Sequence[Mapping[str, Any]], evidence_by_id: Mapping[str, Document]) -> List[tuple]:
     seen_sources = set()
-    for recommendation in proposal["recommendations"]:
-        lines.append("- " + recommendation["text"])
+    for recommendation in recommendations:
         for source_id in recommendation["evidence_ids"]:
             source = evidence_by_id[source_id]
             url = _safe_http_url(source.url)
             if url is not None:
                 seen_sources.add((source.id, url))
-    if seen_sources:
-        lines.extend(["", "Evidence:"])
-        for source_id, url in sorted(seen_sources):
-            lines.append("- " + source_id + ": " + url)
-    if not proposal["recommendations"]:
+    return sorted(seen_sources)
+
+def _marker_event_id(event_id: Any) -> str:
+    """Reject ids that would break single-line pipe-delimited marker lookup."""
+    if not isinstance(event_id, str) or any(char in event_id for char in "\n\r|"):
+        raise ProposalValidationError("event_id is not marker-safe")
+    return event_id
+
+
+def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], event_id: str) -> str:
+    """Render comment format v1: header, recommendations, evidence, labels, marker.
+
+    The final line is the ``voc-nexus-comment|v1|<event_id>`` marker, which
+    integration lookups use as the dedupe key before posting (see
+    docs/INTEGRATION.md completion condition 2 and docs/TEMPLATES.md).
+    """
+
+    marker_id = _marker_event_id(event_id)
+    evidence_by_id = {document.id: document for document in evidence}
+    recommendations = proposal["recommendations"]
+    lines = ["VOC triage recommendations (dry-run):", ""]
+    if recommendations:
+        for recommendation in recommendations:
+            lines.append("- " + recommendation["text"])
+    else:
         lines.append("No grounded recommendation found; manual triage required.")
+    sources = _evidence_gate(recommendations, evidence_by_id)
+    if sources:
+        lines.extend(["", "Evidence:"])
+        for source_id, url in sources:
+            lines.append("- " + source_id + ": " + url)
+    lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    lines.extend(["", "voc-nexus-comment|v1|" + marker_id])
     return "\n".join(lines)
+
+
+def render_issue(event: Event, proposal: Mapping[str, Any], evidence: Sequence[Document]) -> Dict[str, Any]:
+    """Render issue format v1: summary and a structured description.
+
+    Not published by the current CLI; this is the template a future write
+    lifecycle would create issues from (see docs/TEMPLATES.md).
+    """
+
+    evidence_by_id = {document.id: document for document in evidence}
+    summary = normalize_text("[VOC] " + event.summary)[:80]
+    marker_id = _marker_event_id(event.event_id)
+    recommendations = proposal["recommendations"]
+    description_lines = [
+        "Context:",
+        "",
+        "- event_id: " + event.event_id,
+        "- issue_key: " + event.issue_key,
+        "- project: " + event.project,
+        "",
+        "Recommendations:",
+    ]
+    if recommendations:
+        for recommendation in recommendations:
+            description_lines.append("- " + recommendation["text"])
+    else:
+        description_lines.append("No grounded recommendation found; manual triage required.")
+
+    sources = _evidence_gate(recommendations, evidence_by_id)
+    if sources:
+        description_lines.extend(["", "Evidence:"])
+        for source_id, url in sources:
+            description_lines.append("- " + source_id + ": " + url)
+
+    description_lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    marker = "voc-nexus-issue|v1|" + marker_id
+    description_lines.extend(["", marker])
+    description = "\n".join(description_lines)
+    return {"summary": summary, "description": description, "marker": marker}
 
 
 def fixture_proposal(event: Event, evidence: Sequence[Document]) -> Dict[str, Any]:

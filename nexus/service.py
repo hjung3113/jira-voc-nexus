@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Sequence
 from .errors import EngineError
 from .models import Document, Event, parse_corpus, parse_event, payload_fingerprint
 from .opencode import OpenCodeEngine
-from .proposals import fixture_proposal, render_comment, validate_proposal
+from .proposals import fixture_proposal, render_comment, render_issue, validate_proposal
 from .retrieval import retrieve
 from .storage import StateStore
 
@@ -48,11 +48,12 @@ class NexusService:
             proposal = validate_proposal(raw_proposal, evidence)
             engine_name = str(getattr(self.engine, "name", "unknown"))
             result = {
-                "comment": render_comment(proposal, evidence),
+                "comment": render_comment(proposal, evidence, event.event_id),
                 "demo_only": bool(getattr(self.engine, "demo_only", False)),
                 "dry_run": True,
                 "engine": engine_name,
                 "event_id": event.event_id,
+                "issue": render_issue(event, proposal, evidence),
                 "issue_key": event.issue_key,
                 "labels": proposal["labels"],
                 "published": False,
