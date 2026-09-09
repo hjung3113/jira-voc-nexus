@@ -1,0 +1,258 @@
+[
+  {
+    "issue_key": "OPS-201",
+    "project": "OPS",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Parser",
+      "status": "Resolved",
+      "system": "LogWarehouse",
+      "error_codes": ["4107"],
+      "labels": ["parser", "reconnect"],
+      "affected_version": "3.2.1",
+      "updated_at": "2026-01-12T09:30:00Z"
+    },
+    "problem": {
+      "summary": "Parser aborts while inserting raw data after equipment disconnect",
+      "symptom": "파서가 로그 파일을 읽는 중 예외가 발생하며 처리가 중단됩니다.",
+      "environment": "LogWarehouse ParserJob, equipment TYPE_A, 3.2.1",
+      "error": "error code 4107 NullReferenceException during SP_INSERT_RAW"
+    },
+    "investigation": [
+      "ParserJob 로그에서 4107 에러 코드와 함께 재연결 실패 로그를 확인함",
+      "SP_INSERT_RAW 호출 시점에 커넥션이 이미 닫혀 있었음을 확인"
+    ],
+    "resolution": {
+      "root_cause": "equipment reconnect logic did not refresh the stale connection before SP_INSERT_RAW",
+      "action": "added explicit reconnect-and-retry before every SP_INSERT_RAW call in ParserJob",
+      "verification": "재발 없음 확인, 3일간 모니터링 완료, error code 4107 재발 0건"
+    }
+  },
+  {
+    "issue_key": "OPS-202",
+    "project": "OPS",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Scheduler",
+      "status": "Resolved",
+      "system": "LogWarehouse",
+      "error_codes": [],
+      "labels": ["scheduler"],
+      "updated_at": "2026-01-15T02:00:00Z"
+    },
+    "problem": {
+      "summary": "Scheduled ParserJob runs twice for the same window",
+      "symptom": "동일한 시간대에 ParserJob이 중복 실행되어 RAW_DATA에 중복 행이 쌓입니다.",
+      "environment": "LogWarehouse scheduler, cluster mode",
+      "error": "duplicate key violation on RAW_DATA"
+    },
+    "investigation": [
+      "스케줄러 클러스터 노드 두 곳에서 동시에 job이 트리거됨을 확인"
+    ],
+    "resolution": {
+      "root_cause": "scheduler lacked a distributed lock across cluster nodes",
+      "action": "added a distributed lock keyed by job window before ParserJob execution",
+      "verification": "1주일간 중복 실행 0건 확인"
+    }
+  },
+  {
+    "issue_key": "OPS-203",
+    "project": "OPS",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "RawDataService",
+      "status": "Resolved",
+      "system": "LogWarehouse",
+      "error_codes": ["5002"],
+      "labels": ["api", "timeout"],
+      "affected_version": "3.1.0",
+      "updated_at": "2026-01-18T11:00:00Z"
+    },
+    "problem": {
+      "summary": "RawData UI times out fetching large equipment log windows",
+      "symptom": "RawData UI에서 조회 범위를 넓히면 응답이 지연되다 타임아웃됩니다.",
+      "environment": "RawData UI -> RawData API -> RawDataService -> SP_GET_RAW",
+      "error": "error code 5002 gateway timeout on SP_GET_RAW"
+    },
+    "investigation": [
+      "SP_GET_RAW 실행 계획에서 RAW_DATA 풀스캔이 발생함을 확인"
+    ],
+    "resolution": {
+      "root_cause": "SP_GET_RAW lacked an index on the equipment/time range predicate",
+      "action": "added a covering index on RAW_DATA(equipment_id, log_time)",
+      "verification": "동일 조회 범위에서 응답 시간 4.8s -> 220ms로 확인, 재현 안 됨"
+    }
+  },
+  {
+    "issue_key": "PAY-301",
+    "project": "PAY",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Checkout",
+      "status": "Resolved",
+      "system": "PayGateway",
+      "error_codes": ["9931"],
+      "labels": ["checkout", "gateway"],
+      "affected_version": "2.4.0",
+      "updated_at": "2026-01-20T05:45:00Z"
+    },
+    "problem": {
+      "summary": "Checkout card payment timeout during gateway confirmation",
+      "symptom": "결제 확인 단계에서 응답이 오지 않고 타임아웃이 발생합니다.",
+      "environment": "PayGateway checkout confirmation, production",
+      "error": "error code 9931 gateway confirmation timeout"
+    },
+    "investigation": [
+      "게이트웨이 응답 지연이 피크 시간대에 집중됨을 확인"
+    ],
+    "resolution": {
+      "root_cause": "gateway confirmation timeout was set too low for peak-hour latency",
+      "action": "increased the gateway confirmation timeout and added safe replay of the confirmation",
+      "verification": "피크 시간대 재현 테스트에서 타임아웃 0건, verification complete"
+    }
+  },
+  {
+    "issue_key": "PAY-302",
+    "project": "PAY",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Refund",
+      "status": "Resolved",
+      "system": "PayGateway",
+      "error_codes": ["9944"],
+      "labels": ["refund"],
+      "updated_at": "2026-01-22T07:15:00Z"
+    },
+    "problem": {
+      "summary": "Refund request double-submits when the network is slow",
+      "symptom": "네트워크 지연 시 환불 버튼을 다시 누르면 환불이 중복 접수됩니다.",
+      "environment": "Checkout refund flow, mobile client",
+      "error": "error code 9944 duplicate refund request"
+    },
+    "investigation": [
+      "클라이언트 재시도와 서버 재시도가 동시에 발생함을 확인"
+    ],
+    "resolution": {
+      "root_cause": "refund submission lacked an idempotency key",
+      "action": "added an idempotency key to the refund request and server-side dedupe",
+      "verification": "중복 접수 재현 테스트 100회 중 0건 확인"
+    }
+  },
+  {
+    "issue_key": "PAY-303",
+    "project": "PAY",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Ledger",
+      "status": "Resolved",
+      "system": "PayGateway",
+      "error_codes": [],
+      "labels": ["ledger", "reconciliation"],
+      "updated_at": "2026-01-25T10:00:00Z"
+    },
+    "problem": {
+      "summary": "Ledger reconciliation mismatches after partial refunds",
+      "symptom": "부분 환불 이후 원장 합계가 실제 결제 합계와 일치하지 않습니다.",
+      "environment": "Ledger reconciliation batch job, nightly run",
+      "error": "reconciliation delta exceeds tolerance"
+    },
+    "investigation": [
+      "부분 환불 시 원장 항목이 두 번 기록되는 경로를 확인"
+    ],
+    "resolution": {
+      "root_cause": "partial refunds were journaled both by the refund service and the reconciliation batch",
+      "action": "removed the duplicate journal entry from the reconciliation batch path",
+      "verification": "5회 야간 배치에서 delta 0으로 확인"
+    }
+  },
+  {
+    "issue_key": "OPS-204",
+    "project": "OPS",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Parser",
+      "status": "In Progress",
+      "system": "LogWarehouse",
+      "error_codes": ["4201"],
+      "labels": ["parser"],
+      "updated_at": "2026-01-27T03:20:00Z"
+    },
+    "problem": {
+      "summary": "Parser occasionally drops the last log line of a batch",
+      "symptom": "배치 마지막 로그 라인이 간헐적으로 누락되는 현상이 확인됩니다.",
+      "environment": "LogWarehouse ParserJob, equipment TYPE_B",
+      "error": "error code 4201 truncated batch read"
+    },
+    "investigation": [
+      "버퍼 flush 시점과 파일 close 시점의 경합 가능성을 조사 중"
+    ],
+    "resolution": null
+  },
+  {
+    "issue_key": "OPS-205",
+    "project": "OPS",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "RawDataService",
+      "status": "Open",
+      "system": "LogWarehouse",
+      "error_codes": [],
+      "labels": [],
+      "updated_at": "2026-01-28T08:00:00Z"
+    },
+    "problem": {
+      "summary": "RawData API intermittently returns empty pages for valid ranges",
+      "symptom": "유효한 조회 범위에서도 RawData API가 빈 페이지를 반환하는 경우가 있습니다.",
+      "environment": "RawData API, pagination enabled",
+      "error": "empty page returned with HTTP 200"
+    },
+    "investigation": [],
+    "resolution": null
+  },
+  {
+    "issue_key": "PAY-304",
+    "project": "PAY",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Checkout",
+      "status": "Open",
+      "system": "PayGateway",
+      "error_codes": ["4107"],
+      "labels": ["checkout"],
+      "updated_at": "2026-01-29T06:40:00Z"
+    },
+    "problem": {
+      "summary": "Checkout fails with an unfamiliar gateway error code",
+      "symptom": "결제 확인 중 처음 보는 오류 코드가 발생하며 결제가 실패합니다.",
+      "environment": "PayGateway checkout, canary release",
+      "error": "error code 4107 unexpected gateway response"
+    },
+    "investigation": [
+      "게이트웨이 벤더 응답 포맷이 최근 변경되었는지 확인 중"
+    ],
+    "resolution": null
+  },
+  {
+    "issue_key": "PAY-305",
+    "project": "PAY",
+    "metadata": {
+      "issue_type": "Bug",
+      "component": "Refund",
+      "status": "Open",
+      "system": "PayGateway",
+      "error_codes": ["9955"],
+      "labels": ["refund"],
+      "updated_at": "2026-01-30T12:10:00Z"
+    },
+    "problem": {
+      "summary": "Refund status stuck in pending for over 24 hours",
+      "symptom": "환불 상태가 24시간 넘게 대기중 상태로 남아있는 건이 발생합니다.",
+      "environment": "Refund worker queue, production",
+      "error": "error code 9955 refund settlement timeout"
+    },
+    "investigation": [
+      "정산 벤더 콜백 유실 가능성을 조사 중"
+    ],
+    "resolution": null
+  }
+]

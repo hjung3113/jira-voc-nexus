@@ -37,6 +37,42 @@
   with an acceptance-criteria mapping. It is explicitly proposed-not-adopted;
   [docs/TOOLING_DECISION.md](docs/TOOLING_DECISION.md) carries the boundary
   and the current runtime is unchanged.
+
+## RAG toolkit slice (2026-09-10, later session)
+
+- The local POC toolkit from the issue #1 design now exists under `rag/`:
+  strict contracts (`NormalizedIssue`, `WikiPage`, entity/relation,
+  `IndexDocument`), ACL-before-scoring retrieval (BM25 + hashing-embedding
+  vectors + RRF + boosts + lexical reranker; trust tiebreak), SQLite
+  knowledge registry with BFS relation expansion (+ real lazy psycopg PG
+  adapter), trust-ordered context builder, golden-set evaluation harness
+  (recall@5/10, MRR@10, nDCG@10, latency p50/p95), and a local-only CLI
+  (`python3 -m rag index|query|eval`). Optional extras (`rag-platform`,
+  `rag-pg`, `rag-reranker`) carry the OpenSearch/BGE/PG adapters; default
+  imports stay stdlib-only.
+- Company deployment guides live in `guides/` (deployment/swap, Jira
+  ingestion with verbatim LLM comment-classification prompt contract, wiki
+  ingestion, registry seeding with LLM-assisted extraction + validation,
+  ACL, evaluation). They are written to be consumed by an LLM without repo
+  context.
+- Verification: **136/136 tests** (20 nexus + 116 rag; 3 PG tests skip
+  without `NEXUS_RAG_PG_TEST_DATASOURCE`); `python3 -m rag eval` on the
+  10-query synthetic golden set: recall@5 = 1.000 for all five variants
+  (rerank variants ndcg@10 = 0.989 — honest synthetic signal, real verdict
+  needs the company golden corpus); `python3 -m rag query` works with the
+  registry sidecar deleted (state is one JSON); nexus/ byte-identical.
+- Review provenance: Grok R1 gate review (1 high: ACL-after-scoring + 8
+  more) applied and re-verified; Grok R2 final review (1 high: OpenSearch
+  swap corpus + 9 more) applied and re-verified. A Codex GPT-6 Astra
+  final-judgment pass was dispatched at the 05:29 quota reset but the 5h
+  window was still exhausted; task `task_f667be08f1ff` is blocked with that
+  reason — retry it when the window refills if a design-level second
+  opinion is still wanted.
+- Boundary: this is the POC toolkit, not an adoption. The nexus/ runtime is
+  unchanged; adoption still requires the evaluation gate (real-but-sanitized
+  golden corpus, metric comparison, ACL leakage = 0) per
+  [docs/RAG_DESIGN.md](docs/RAG_DESIGN.md) and
+  [docs/TOOLING_DECISION.md](docs/TOOLING_DECISION.md).
 - Replay caveat: an event first processed before format v1 keeps its
   originally stored comment/result when replayed (replay identity is
   `event_id` + payload fingerprint and does not include the renderer version).

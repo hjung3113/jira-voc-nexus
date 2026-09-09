@@ -416,3 +416,23 @@ Each slice is independently creatable as a follow-up issue:
 | Golden-set evaluation plan and metrics defined | Evaluation gate |
 | Proposed stack clearly separated from adopted runtime | Status header + TOOLING_DECISION.md |
 | Follow-up implementation issues creatable independently | Implementation slices |
+
+## Implementation status
+
+A local proof-of-concept toolkit implementing slices 1, 3-6, and 7's
+harness now exists under `rag/` (contracts, ACL, SQLite registry, retrieval
+pipeline, context builder, evaluation harness, `python3 -m rag` CLI) with
+deployment/ingestion/registry/ACL/evaluation guides under `guides/` (see
+[the guides index entry](INDEX.md)). The default path uses only local
+stand-in components -- BM25 (`LexicalIndex`), a deterministic hashing
+embedding (`HashingEmbedding`), a lexical-overlap reranker
+(`LexicalOverlapReranker`), and `SqliteKnowledgeRegistry` -- so it runs with
+no network and no optional dependencies. The optional adapters
+(`OpenSearchBackend`, `BgeRerankerAdapter`, `PostgresKnowledgeRegistry`) are
+real, lazy-imported code reviewed against their documented contracts but not
+yet exercised against a live OpenSearch/HF/PostgreSQL deployment in this
+environment. None of this changes the adopted runtime described above or in
+[TOOLING_DECISION.md](TOOLING_DECISION.md): adoption still requires the
+evaluation-gate evidence (golden set >= 100 queries, the metric comparisons,
+ACL leakage = 0) described above, gathered per
+[guides/RAG_EVALUATION.md](../guides/RAG_EVALUATION.md).

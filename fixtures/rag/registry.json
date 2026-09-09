@@ -1,0 +1,23 @@
+{
+  "entities": [
+    {"id": "ui:rawdata", "type": "ui", "name": "RawData UI", "system": "LogWarehouse", "description": "Operator screen for browsing raw data records."},
+    {"id": "api:rawdata", "type": "api", "name": "RawData API", "system": "LogWarehouse", "description": "REST endpoint fronting the raw data service."},
+    {"id": "service:rawdata", "type": "service", "name": "RawDataService", "system": "LogWarehouse", "description": "Backend service mediating raw data reads/writes."},
+    {"id": "sp:get_raw", "type": "stored_procedure", "name": "SP_GET_RAW", "system": "LogWarehouse", "description": "Stored procedure returning raw data rows."},
+    {"id": "sp:insert_raw", "type": "stored_procedure", "name": "SP_INSERT_RAW", "system": "LogWarehouse", "description": "Stored procedure inserting parsed raw data rows."},
+    {"id": "table:raw_data", "type": "table", "name": "RAW_DATA", "system": "LogWarehouse", "description": "Table holding raw equipment log records."},
+    {"id": "job:parser", "type": "job", "name": "ParserJob", "system": "LogWarehouse", "description": "Scheduled job that parses equipment logs and inserts raw data."},
+    {"id": "component:parser", "type": "component", "name": "Parser", "system": "LogWarehouse", "description": "Log parsing component used by ParserJob."},
+    {"id": "component:reconnect", "type": "component", "name": "Reconnect", "system": "LogWarehouse", "description": "Connection retry/reconnect handling for equipment links."}
+  ],
+  "relations": [
+    {"source_id": "ui:rawdata", "relation_type": "CALLS", "target_id": "api:rawdata"},
+    {"source_id": "api:rawdata", "relation_type": "CALLS", "target_id": "service:rawdata"},
+    {"source_id": "service:rawdata", "relation_type": "EXECUTES", "target_id": "sp:get_raw"},
+    {"source_id": "sp:get_raw", "relation_type": "READS", "target_id": "table:raw_data"},
+    {"source_id": "job:parser", "relation_type": "EXECUTES", "target_id": "sp:insert_raw"},
+    {"source_id": "sp:insert_raw", "relation_type": "WRITES", "target_id": "table:raw_data"},
+    {"source_id": "job:parser", "relation_type": "USES", "target_id": "component:parser"},
+    {"source_id": "component:parser", "relation_type": "USES", "target_id": "component:reconnect"}
+  ]
+}

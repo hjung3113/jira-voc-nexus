@@ -1,0 +1,123 @@
+[
+  {
+    "query": {
+      "text": "파서가 로그 파일을 읽는 중 예외가 발생하며 처리가 중단됩니다 error code 4107",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-201:problem"]
+  },
+  {
+    "query": {
+      "text": "동일한 시간대에 ParserJob이 중복 실행되어 RAW_DATA에 중복 행이 쌓입니다",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-202:problem"]
+  },
+  {
+    "query": {
+      "text": "error code 4107 during raw data insert",
+      "project": "",
+      "component": "",
+      "error_codes": ["4107"],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-201:problem", "PAY-304:problem"]
+  },
+  {
+    "query": {
+      "text": "parser aborts inserting raw data after equipment disconnect",
+      "project": "",
+      "component": "Parser",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-201:problem"]
+  },
+  {
+    "query": {
+      "text": "parser 재연결 실패 equipment disconnect error code 4107",
+      "project": "PAY",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-201:problem"]
+  },
+  {
+    "query": {
+      "text": "네트워크 지연 시 환불 버튼을 다시 누르면 환불이 중복 접수됩니다",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["PAY-302:problem"]
+  },
+  {
+    "query": {
+      "text": "결제 확인 단계에서 응답이 오지 않고 타임아웃이 발생합니다 gateway confirmation",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["PAY-301:problem"]
+  },
+  {
+    "query": {
+      "text": "RawData UI 조회 범위를 넓히면 응답이 지연되다 타임아웃 SP_GET_RAW",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-203:problem"]
+  },
+  {
+    "query": {
+      "text": "부분 환불 이후 원장 합계가 실제 결제 합계와 일치하지 않습니다 reconciliation",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["PAY-303:problem"]
+  },
+  {
+    "query": {
+      "text": "Parser 컴포넌트 재연결 SP_INSERT_RAW Reconnect 컴포넌트",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": [],
+      "document_types": ["system_knowledge"]
+    },
+    "relevant_doc_ids": ["wiki:systems-parser-component"]
+  },
+  {
+    "query": {
+      "text": "ParserJob SP_INSERT_RAW parser aborts inserting raw data after equipment disconnect",
+      "project": "",
+      "component": "",
+      "error_codes": [],
+      "entities": ["ParserJob"],
+      "document_types": ["jira_problem"]
+    },
+    "relevant_doc_ids": ["OPS-201:problem"]
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "page_id": "domain-context-carryover",
+    "title": "Context, Carryover, Lot, Wafer definitions",
+    "text": "Context는 장비 처리 단위의 실행 컨텍스트를 의미하며, Carryover는 이전 Lot 처리 결과가 다음 Lot에 영향을 주는 현상을 말한다. Lot과 Wafer는 반도체 제조 공정의 표준 처리 단위이다.",
+    "page_type": "domain",
+    "system": "LogWarehouse",
+    "component": "",
+    "owner": "DataPlatform",
+    "status": "canonical",
+    "related_entities": ["component:parser"]
+  },
+  {
+    "page_id": "domain-error-code-glossary-draft",
+    "title": "Error code glossary (draft)",
+    "text": "초안: 4107은 재연결 실패 계열 오류, 5002는 게이트웨이 타임아웃 계열 오류로 잠정 분류한다. 검토 후 canonical 문서로 승격 예정.",
+    "page_type": "domain",
+    "system": "LogWarehouse",
+    "component": "",
+    "owner": "DataPlatform",
+    "status": "draft",
+    "related_entities": ["component:parser", "component:reconnect"]
+  },
+  {
+    "page_id": "systems-logwarehouse-overview",
+    "title": "LogWarehouse system overview",
+    "text": "LogWarehouse ingests equipment logs through ParserJob, which parses raw log lines and writes them into RAW_DATA via SP_INSERT_RAW. RawData UI and RawData API expose read access through RawDataService and SP_GET_RAW.",
+    "page_type": "systems",
+    "system": "LogWarehouse",
+    "component": "Parser",
+    "owner": "DataPlatform",
+    "status": "canonical",
+    "related_entities": ["job:parser", "component:parser", "service:rawdata"]
+  },
+  {
+    "page_id": "systems-parser-component",
+    "title": "Parser component and reconnect handling",
+    "text": "Parser 컴포넌트는 장비 로그 스트림을 파싱하며, 연결이 끊어졌을 때 Reconnect 컴포넌트를 통해 재연결을 시도한 뒤에만 SP_INSERT_RAW를 호출해야 한다.",
+    "page_type": "systems",
+    "system": "LogWarehouse",
+    "component": "Parser",
+    "owner": "DataPlatform",
+    "status": "canonical",
+    "related_entities": ["component:parser", "component:reconnect", "sp:insert_raw"]
+  },
+  {
+    "page_id": "data-raw-data-contract",
+    "title": "RAW_DATA table contract",
+    "text": "RAW_DATA table stores one row per parsed equipment log line, keyed by (equipment_id, log_time). Writers must go through SP_INSERT_RAW; readers must go through SP_GET_RAW.",
+    "page_type": "data",
+    "system": "LogWarehouse",
+    "component": "",
+    "owner": "DataPlatform",
+    "status": "canonical",
+    "related_entities": ["table:raw_data", "sp:get_raw", "sp:insert_raw"]
+  }
+]
