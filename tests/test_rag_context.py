@@ -21,6 +21,7 @@ def _doc(doc_id, title, text, document_type, source_id=None):
         doc_id=doc_id,
         source_type="jira" if document_type.startswith("jira") else "wiki",
         document_type=document_type,
+        project="",
         system="LogWarehouse",
         component="Parser",
         entity_ids=(),

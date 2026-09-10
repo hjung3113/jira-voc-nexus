@@ -12,9 +12,8 @@
   `nexus/proposals.py`/`rag/contracts.py` and depend on #3/#5's taxonomy decisions. Only
   **#7** and **#11** (this entry) were fully file-disjoint from each other and from every
   gated/shared-surface issue, and neither needed a design decision first. Confirmed this
-  scope with the user before dispatching. A companion "Gap issue #7" slice was run in
-  parallel in the same session (branch `codex/gap-issue-7-index-document-project-field`,
-  PR #13); its own HANDOFF entry lives on that branch, not this one.
+  scope with the user before dispatching. See the companion "Gap issue #7" entry below for
+  the other slice run in parallel.
 - Ran as an Orca-orchestrated worker per `voc-slice`/`orchestration`: Run
   `run_d1e8445e5d4e`, Task `task_8a0eb5264ab9`, `worker-start --agent codex --model
   gpt-5.6-luna --effort max` in the current worktree, alongside the #7 worker in the same
@@ -24,23 +23,67 @@
   `possible-duplicate`) with one sentence per label on when to use it, the audience-split
   routing rule (customer-facing impact/status/guidance in `customer_reply`, internal
   diagnosis/remediation in `engineering_action`), and the duplication-judgment policy (only
-  `possible-duplicate` when at least one evidence document describes the same underlying
-  problem as the event, not a merely similar symptom or topically related one; default to
-  `needs-triage` otherwise). `output_contract`'s JSON shape and the existing
-  null-not-invented/per-field-grounding sentences are unchanged.
-- Coordinator verification (on this branch alone, before the companion #7 branch merges):
-  `python3 -m unittest discover -s tests -v` — **181/181 passing** (3 PG-registry tests
-  skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff --check` clean; fixture
-  CLI smoke run exit 0.
-- Opened as PR #12. Astra medium review (Orca orchestration Run `run_025664e31ba8`, Task
-  `task_42a1ea06f372`) found 1 medium + 1 low: (medium) the duplicate-judgment wording
-  compared evidence documents to each other rather than anchoring to the current event and
-  allowed a bare shared "symptom" to qualify, which the coordinator fixed by rewording to
-  "at least one evidence document describes the same underlying problem as this event, not
-  merely a similar symptom" (`nexus/opencode.py`, `tests/test_nexus.py`); (low) this file
-  had a dangling "see companion entry below" reference and an inaccurate 182/182 test count
-  copied from the combined pre-split verification, both fixed above. Re-verified after the
-  fix: 181/181 passing, `git diff --check` clean.
+  `possible-duplicate` when evidence describes the same underlying problem, not a merely
+  related one; default to `needs-triage` otherwise). `output_contract`'s JSON shape and the
+  existing null-not-invented/per-field-grounding sentences are unchanged.
+- Coordinator verification: `python3 -m unittest discover -s tests -v` — **182/182 passing**
+  (3 PG-registry tests skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff
+  --check` clean; fixture CLI smoke run exit 0.
+- Merged as PR #12 (squashed). Astra medium review (Orca orchestration Run
+  `run_025664e31ba8`, Task `task_42a1ea06f372`) found 1 medium + 1 low before merge:
+  (medium) the duplicate-judgment wording compared evidence documents to each other rather
+  than anchoring to the current event and allowed a bare shared "symptom" to qualify, fixed
+  by rewording to "at least one evidence document describes the same underlying problem as
+  this event, not merely a similar symptom" (`nexus/opencode.py`, `tests/test_nexus.py`);
+  (low) a dangling "see companion entry below" reference and a stale test count, both fixed.
+  Re-verified after the fix: 181/181 passing on that branch alone, `git diff --check` clean.
+
+## Gap issue #7: project field on IndexDocument (rag/ toolkit) (2026-09-11)
+
+- Companion slice to the "Gap issue #11" entry above, run in parallel in the same worktree
+  (disjoint files: this slice touches only `rag/`, `guides/`, and their tests; see that
+  entry for the full file-surface analysis of why only these two issues were parallelized).
+- Ran as an Orca-orchestrated worker per `voc-slice`/`orchestration`: Run
+  `run_d1e8445e5d4e`, Task `task_ddbca538169e`, `worker-start --agent codex --model
+  gpt-5.6-luna --effort max`. Completed cleanly with `worker_done`, released.
+- Change (`rag/contracts.py`, `rag/retrieval.py`, `guides/RAG_ACL.md`,
+  `guides/RAG_JIRA_INGESTION.md`, and the affected `tests/test_rag_*.py`): `IndexDocument`
+  gained a `project: str` field (`issue_to_documents` copies `NormalizedIssue.project` onto
+  both the `jira_problem` and `jira_resolution` documents; `wiki_to_document` sets
+  `project=""` since `WikiPage` has no project concept). `rag/retrieval.py`'s same-project
+  boost at the `_apply_boosts` step now compares `doc.project == query.project` instead of
+  the prior `doc.system == query.project` workaround — it remains a soft ranking boost, not
+  an enforced filter, per `rag/acl.py`'s own docstring (no ACL enforcement code was added
+  there, matching the issue's scope). `guides/RAG_ACL.md`'s example
+  `CompanyPrincipalAcl.visible_document` now wires the already-declared-but-unused
+  `Principal.allowed_projects` field into an actual `doc.project` check, replacing a comment
+  that used to say project-level ACL needed a side table. Did not touch `nexus/`,
+  `rag/acl.py`'s enforcement logic, `rag/registry.py`/`registry_pg.py` (their `system`
+  column is the entity registry's own field, unrelated to `IndexDocument.project`), or any
+  adoption-boundary doc.
+- Coordinator verification: `python3 -m unittest discover -s tests -v` — **182/182 passing**
+  (3 PG-registry tests skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff
+  --check` clean; fixture CLI smoke run exit 0.
+- **Real finding from re-running `python3 -m rag eval --fixtures-dir fixtures/rag --golden
+  fixtures/rag/golden_set.json`**: fixing the same-project boost changes the synthetic
+  golden-set metrics — `vector-only`/`hybrid` recall@5 drops from 1.000 to 0.909 (mrr@10/
+  ndcg@10 from 1.000 to 0.924/0.941; `bm25-only` and the rerank variants are unaffected).
+  Root cause verified by inspection, not a defect in this fix: `fixtures/rag/golden_set.json`
+  query index 4 sets `query.project = "PAY"` while its one relevant doc is `OPS-201:problem`
+  (actual project `OPS`). Under the old buggy comparison (`doc.system == query.project`,
+  literal string `"PAY"` never equals any fixture `system` value like `"LogWarehouse"`/
+  `"PayGateway"`), the boost silently never fired for this query and the mismatch was
+  invisible. Under the fixed comparison, the boost now correctly fires for every same-project
+  `PAY-*` distractor document, outranking the true-positive `OPS-201:problem` for that one
+  query in the non-lexical variants. This is a golden-set fixture quality issue (a query
+  whose `project` field does not match its own relevant doc's project), not a retrieval
+  regression — recorded here rather than silently fixed, since correcting the golden set is
+  a separate, out-of-scope curation task. `git stash`/`git stash pop` was used only to
+  confirm the pre-fix baseline numbers; no golden-set files were modified.
+- Follow-up: `fixtures/rag/golden_set.json` query index 4's `project` field should be
+  corrected (to `"OPS"` or `""`) in a future golden-set curation pass so the now-correct
+  same-project boost is evaluated fairly.
+- Not yet merged — opened as its own PR for Astra review before merge.
 
 ## Current state
 

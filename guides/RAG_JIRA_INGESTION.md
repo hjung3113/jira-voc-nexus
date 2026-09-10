@@ -310,6 +310,10 @@ issue = parse_normalized_issue(payload)         # raises RagInputError on any co
 documents = issue_to_documents(issue)            # [jira_problem doc, jira_resolution doc]
 ```
 
+`issue_to_documents` copies `NormalizedIssue.project` into the `project`
+field of both Jira `IndexDocument` records. `wiki_to_document` sets
+`IndexDocument.project` to `""` because `WikiPage` has no project concept.
+
 ## Verification checklist
 
 - [ ] Every mapped `NormalizedIssue` payload passes

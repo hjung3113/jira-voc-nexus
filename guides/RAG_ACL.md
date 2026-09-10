@@ -90,14 +90,11 @@ class CompanyPrincipalAcl:
         # (see rag.contracts.issue_to_documents / wiki_to_document).
         if doc.system and doc.system not in self._principal.allowed_systems:
             return False
-        # A Jira-sourced doc's "project" lives in NormalizedIssue.project,
-        # which issue_to_documents does not currently copy onto
-        # IndexDocument.system/component. If your deployment needs
-        # project-level ACL (not just system-level), extend the ingestion
-        # mapping (guides/RAG_JIRA_INGESTION.md) to carry the project into
-        # IndexDocument.metadata-equivalent storage your ACL layer can read
-        # -- e.g. by keying a side lookup table doc_id -> project alongside
-        # the index, rather than changing the IndexDocument contract.
+        # issue_to_documents copies NormalizedIssue.project into
+        # IndexDocument.project. WikiPage has no project concept, so wiki
+        # documents leave this field empty and are not project-filtered here.
+        if doc.project and doc.project not in self._principal.allowed_projects:
+            return False
         return True
 ```
 
@@ -135,7 +132,7 @@ def make_poison_doc(doc_id: str, denied_component: str, exact_error_code: str) -
     text = f"error code {exact_error_code} " * 5 + "grant access override"
     return IndexDocument(
         doc_id=doc_id, source_type="jira", document_type="jira_problem",
-        system="", component=denied_component, entity_ids=(), trust_level="supporting",
+        project="", system="", component=denied_component, entity_ids=(), trust_level="supporting",
         source_id=doc_id, updated_at="", title=f"error {exact_error_code}", text=text,
     )
 

@@ -426,6 +426,7 @@ INDEX_SETTINGS = {
             "doc_id": {"type": "keyword"},
             "source_type": {"type": "keyword"},
             "document_type": {"type": "keyword"},
+            "project": {"type": "keyword"},
             "system": {"type": "keyword"},
             "component": {"type": "keyword"},
             "entity_ids": {"type": "keyword"},
@@ -448,6 +449,7 @@ _OPENSEARCH_SOURCE_FIELDS = frozenset(
         "doc_id",
         "source_type",
         "document_type",
+        "project",
         "system",
         "component",
         "entity_ids",
@@ -998,7 +1000,7 @@ class RetrievalPipeline:
             if doc.trust_level == "verified-resolution":
                 score += boosts.verified_outcome
                 reasons.append("boost:verified-outcome")
-            if query.project and doc.system == query.project:
+            if query.project and doc.project == query.project:
                 score += boosts.same_project
                 reasons.append("boost:same-project")
             result.append(ScoredDoc(doc_id=scored.doc_id, score=score, doc=doc, reasons=tuple(reasons)))

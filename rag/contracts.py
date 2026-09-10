@@ -307,6 +307,7 @@ _INDEX_DOCUMENT_FIELDS = {
     "doc_id",
     "source_type",
     "document_type",
+    "project",
     "system",
     "component",
     "entity_ids",
@@ -323,6 +324,7 @@ class IndexDocument:
     doc_id: str
     source_type: str
     document_type: str
+    project: str
     system: str
     component: str
     entity_ids: Tuple[str, ...]
@@ -340,6 +342,7 @@ def parse_index_document(payload: Any) -> IndexDocument:
         doc_id=_string(data["doc_id"], "doc_id", limit=500),
         source_type=_enum(data["source_type"], "source_type", SOURCE_TYPES),
         document_type=_enum(data["document_type"], "document_type", DOCUMENT_TYPES),
+        project=_string(data["project"], "project", allow_empty=True, limit=500),
         system=_string(data["system"], "system", allow_empty=True, limit=500),
         component=_string(data["component"], "component", allow_empty=True, limit=500),
         entity_ids=_string_tuple(data["entity_ids"], "entity_ids", item_limit=500),
@@ -381,6 +384,7 @@ def issue_to_documents(issue: NormalizedIssue) -> List[IndexDocument]:
             doc_id=f"{issue.issue_key}:problem",
             source_type="jira",
             document_type="jira_problem",
+            project=issue.project,
             system=system,
             component=component,
             entity_ids=(),
@@ -405,6 +409,7 @@ def issue_to_documents(issue: NormalizedIssue) -> List[IndexDocument]:
                 doc_id=f"{issue.issue_key}:resolution",
                 source_type="jira",
                 document_type="jira_resolution",
+                project=issue.project,
                 system=system,
                 component=component,
                 entity_ids=(),
@@ -424,6 +429,7 @@ def wiki_to_document(page: WikiPage) -> IndexDocument:
         doc_id=f"wiki:{page.page_id}",
         source_type="wiki",
         document_type=_WIKI_DOCUMENT_TYPE[page.page_type],
+        project="",
         system=page.system,
         component=page.component,
         entity_ids=page.related_entities,
