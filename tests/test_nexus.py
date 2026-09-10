@@ -168,6 +168,7 @@ class NexusTests(unittest.TestCase):
             result = NexusService(str(Path(directory) / "state.sqlite3"), engine=engine).process(
                 event, self.corpus
             )
+        self.assertEqual(engine.calls, 0)
         self.assertIsNone(result["customer_reply"])
         self.assertIsNone(result["engineering_action"])
         self.assertEqual(result["labels"], ["needs-triage"])
