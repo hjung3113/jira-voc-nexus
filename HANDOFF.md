@@ -65,24 +65,42 @@
   (3 PG-registry tests skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff
   --check` clean; fixture CLI smoke run exit 0.
 - **Real finding from re-running `python3 -m rag eval --fixtures-dir fixtures/rag --golden
-  fixtures/rag/golden_set.json`**: fixing the same-project boost changes the synthetic
-  golden-set metrics — `vector-only`/`hybrid` recall@5 drops from 1.000 to 0.909 (mrr@10/
-  ndcg@10 from 1.000 to 0.924/0.941; `bm25-only` and the rerank variants are unaffected).
-  Root cause verified by inspection, not a defect in this fix: `fixtures/rag/golden_set.json`
-  query index 4 sets `query.project = "PAY"` while its one relevant doc is `OPS-201:problem`
-  (actual project `OPS`). Under the old buggy comparison (`doc.system == query.project`,
-  literal string `"PAY"` never equals any fixture `system` value like `"LogWarehouse"`/
-  `"PayGateway"`), the boost silently never fired for this query and the mismatch was
-  invisible. Under the fixed comparison, the boost now correctly fires for every same-project
-  `PAY-*` distractor document, outranking the true-positive `OPS-201:problem` for that one
-  query in the non-lexical variants. This is a golden-set fixture quality issue (a query
-  whose `project` field does not match its own relevant doc's project), not a retrieval
-  regression — recorded here rather than silently fixed, since correcting the golden set is
-  a separate, out-of-scope curation task. `git stash`/`git stash pop` was used only to
-  confirm the pre-fix baseline numbers; no golden-set files were modified.
-- Follow-up: `fixtures/rag/golden_set.json` query index 4's `project` field should be
-  corrected (to `"OPS"` or `""`) in a future golden-set curation pass so the now-correct
-  same-project boost is evaluated fairly.
+  fixtures/rag/golden_set.json`** (numbers on this branch): `bm25-only` recall@5/recall@10
+  stay 1.000/1.000 but mrr@10/ndcg@10 drop 1.000→0.927/0.944; `vector-only`/`hybrid` drop
+  further, recall@5 1.000→0.909, mrr@10/ndcg@10 1.000→0.924/0.941; the rerank variants are
+  unaffected (1.000/1.000/1.000/0.989 unchanged). Root cause: `fixtures/rag/golden_set.json`
+  query index 4 sets `query.project = "PAY"` while its one relevant doc,
+  `OPS-201:problem`, actually belongs to project `OPS`. Under the old buggy comparison
+  (`doc.system == query.project`, a literal string like `"PAY"` never equalling a fixture
+  `system` value such as `"LogWarehouse"`/`"PayGateway"`), the boost never fired for this
+  query and the effect was invisible. Under the fixed comparison it now fires for every
+  same-project `PAY-*` distractor, outranking the true positive.
+- **Astra medium review corrected the coordinator's first framing of this finding**
+  (Orca orchestration Run `run_025664e31ba8`, Task `task_da08c2097e6a`, run in a separate
+  `astra-review-pr13` child worktree checked out on this branch): the coordinator had
+  called query index 4 a "golden-set fixture defect" and proposed relabeling its
+  `project` field. Astra pointed out this is wrong — `docs/RAG_DESIGN.md:193-198` states
+  same-project is explicitly "a small boost, **not a hard filter**" specifically because
+  "project-only filtering can hide valid cross-project failures/remediations," and
+  `guides/RAG_EVALUATION.md:218-221` explicitly requires a cross-project golden-set subset
+  "mirrored from this repo's own `fixtures/rag/golden_set.json`" — i.e. query index 4 is
+  an intentional cross-project golden case, not a data-entry error, and must not be
+  relabeled. Astra also reproduced the actual rank shift: the same-project boost's fixed
+  weight now dominates the ~0.016-0.033 RRF fusion score range enough to move
+  `OPS-201:problem` from rank 1 to rank 5-6 for `bm25-only`/`vector-only`/`hybrid`. The
+  corrected framing: this is an **acknowledged cross-project ranking regression** exposed
+  (not caused in kind, only in visibility) by fixing the field-comparison bug, and the real
+  follow-up is **boost-magnitude calibration** (`boosts.same_project` in
+  `rag/retrieval.py`), not a golden-set edit — the golden case is preserved as-is.
+  `git stash`/`git stash pop` was used only to confirm the pre-fix baseline numbers on a
+  clean tree; no golden-set files were modified, and boost-magnitude tuning is left out of
+  this PR's scope (it needs its own evaluation pass across more than one query, and this
+  issue was specifically about the missing `project` field, not boost calibration).
+- Follow-up (revised): tune `boosts.same_project` in `rag/retrieval.py` against a broader
+  golden-set evaluation so the now-correctly-wired same-project boost stops overriding a
+  deliberately cross-project relevant result; do **not** edit
+  `fixtures/rag/golden_set.json` query index 4, which is intentional per
+  `guides/RAG_EVALUATION.md`'s cross-project requirement.
 - Not yet merged — opened as its own PR for Astra review before merge.
 
 ## Current state
