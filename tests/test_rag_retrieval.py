@@ -37,11 +37,12 @@ def load_fixture(name):
         return json.load(stream)
 
 
-def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", system="", component="", source_id=None, entity_ids=()):
+def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", project="", system="", component="", source_id=None, entity_ids=()):
     return IndexDocument(
         doc_id=doc_id,
         source_type="jira",
         document_type=document_type,
+        project=project,
         system=system,
         component=component,
         entity_ids=entity_ids,
@@ -202,6 +203,7 @@ class OpenSearchBackendTests(unittest.TestCase):
                     "doc_id": doc.doc_id,
                     "source_type": doc.source_type,
                     "document_type": doc.document_type,
+                    "project": doc.project,
                     "system": doc.system,
                     "component": doc.component,
                     "entity_ids": list(doc.entity_ids),
@@ -236,6 +238,7 @@ class OpenSearchBackendTests(unittest.TestCase):
                     "doc_id": doc.doc_id,
                     "source_type": doc.source_type,
                     "document_type": doc.document_type,
+                    "project": doc.project,
                     "system": doc.system,
                     "component": doc.component,
                     "entity_ids": list(doc.entity_ids),
@@ -281,6 +284,42 @@ class RrfFuseTests(unittest.TestCase):
 
 
 class BoostTests(unittest.TestCase):
+    def test_same_project_boost_uses_project_not_system(self):
+        same_system_different_project = _doc(
+            "same-system",
+            "parser issue",
+            "parser failed during insert",
+            project="OTHER",
+            system="OPS",
+        )
+        same_project_different_system = _doc(
+            "same-project",
+            "parser issue",
+            "parser failed during insert",
+            project="OPS",
+            system="OTHER",
+        )
+        pipeline = RetrievalPipeline(
+            lexical=LexicalIndex([same_system_different_project, same_project_different_system]),
+            vector=VectorIndex([same_system_different_project, same_project_different_system], HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+        )
+        query = RetrievalQuery(text="parser failed during insert", project="OPS")
+        boosted = pipeline._apply_boosts(
+            query,
+            [
+                ScoredDoc(same_system_different_project.doc_id, 0.0, same_system_different_project),
+                ScoredDoc(same_project_different_system.doc_id, 0.0, same_project_different_system),
+            ],
+        )
+
+        same_system_result = next(item for item in boosted if item.doc_id == "same-system")
+        same_project_result = next(item for item in boosted if item.doc_id == "same-project")
+        self.assertNotIn("boost:same-project", same_system_result.reasons)
+        self.assertEqual(same_system_result.score, 0.0)
+        self.assertIn("boost:same-project", same_project_result.reasons)
+        self.assertGreater(same_project_result.score, same_system_result.score)
+
     def test_error_code_doc_outranks_generic_doc(self):
         docs = [
             _doc("with-code", "parser issue", "parser failed with error code 4107 during insert", system="OPS", component="Parser"),

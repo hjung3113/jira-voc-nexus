@@ -178,6 +178,7 @@ class IndexDocumentParsingTests(unittest.TestCase):
             "doc_id": "d1",
             "source_type": "bogus",
             "document_type": "jira_problem",
+            "project": "",
             "system": "",
             "component": "",
             "entity_ids": [],
@@ -195,6 +196,7 @@ class IndexDocumentParsingTests(unittest.TestCase):
             "doc_id": "d1",
             "source_type": "jira",
             "document_type": "jira_problem",
+            "project": "",
             "system": "",
             "component": "",
             "entity_ids": [],
@@ -215,8 +217,10 @@ class DocumentProjectionTests(unittest.TestCase):
         self.assertEqual(len(docs), 2)
         self.assertEqual(docs[0].doc_id, "OPS-201:problem")
         self.assertEqual(docs[0].document_type, "jira_problem")
+        self.assertEqual(docs[0].project, "OPS")
         self.assertEqual(docs[1].doc_id, "OPS-201:resolution")
         self.assertEqual(docs[1].document_type, "jira_resolution")
+        self.assertEqual(docs[1].project, "OPS")
         self.assertEqual(docs[1].trust_level, "verified-resolution")
 
     def test_issue_without_resolution_yields_one_document(self):
@@ -245,6 +249,7 @@ class DocumentProjectionTests(unittest.TestCase):
             doc = wiki_to_document(page)
             self.assertEqual(doc.document_type, expected_document_type)
             self.assertEqual(doc.doc_id, f"wiki:{page.page_id}")
+            self.assertEqual(doc.project, "")
 
 
 if __name__ == "__main__":
