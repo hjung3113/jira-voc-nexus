@@ -1,14 +1,38 @@
-# Comment/Issue Templates (v1)
+# Comment/Issue Templates (v1 implemented, v2 design target)
 
 This document defines the exact output contract for `nexus/proposals.py`'s
 `render_comment` and `render_issue`, the input contract those renderers
 consume (`nexus/models.py`'s `parse_event`/`parse_corpus`), and the label
 taxonomy. It is the reference other agents and the company-side producer
-should match; the renderers themselves are the source of truth if this
+should match; **for v1, the renderers are the source of truth** if this
 document and the code ever disagree — file a fix here, not a code change to
-match stale prose.
+match stale prose. **v2 is a recorded design target only** (per
+[GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9) and
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s audience-split proposal contract);
+until the paired `voc-slice` implementation task lands, v1 is what actually
+runs and this document's v1 sections remain authoritative for current
+behavior.
 
-## 1. Comment format v1
+## 0. Format versions at a glance
+
+- **v1** (implemented) — one undifferentiated `recommendations` list.
+  Superseded by v2 as the design target for new events (see
+  [ARCHITECTURE.md's audience-split proposal contract](ARCHITECTURE.md)),
+  but **not deleted from this document**: v1 remains the actual renderer
+  behavior until the paired `voc-slice` implementation task lands, and any
+  event already processed under v1 keeps its stored v1 comment/issue on
+  replay regardless of code version (see "Replay caveat" in `HANDOFF.md` —
+  replay identity is `event_id` + payload fingerprint, not renderer
+  version).
+- **v2** (design only — not yet implemented) — splits output into a
+  `customer_reply` section and an `engineering_action` section, each
+  independently evidence-grounded. §1 and §2 below are updated in place to
+  show v1 as currently implemented and v2 as the recorded design target;
+  the marker line names the version so old and new markers never collide.
+
+## 1. Comment format v1 (implemented) / v2 (design target)
+
+### v1 (current renderer behavior)
 
 `render_comment(proposal, evidence, event_id)` returns a single string with
 this structure, in this exact order:
@@ -81,7 +105,90 @@ newline, or carriage return (`ProposalValidationError`, fail-closed) so the
 marker always stays a single unambiguous line; producers should emit
 `[A-Za-z0-9._-]`-style ids.
 
-## 2. Issue format v1
+### v2 (design target — not yet implemented)
+
+`render_comment(proposal, evidence, event_id)` returns a single string with
+this structure, in this exact order:
+
+```text
+VOC triage recommendations (dry-run):
+
+Customer reply:
+<customer_reply.text, or the no-grounded-reply line>
+
+Engineering action:
+<engineering_action.text, or the no-grounded-action line>
+[blank line]
+Evidence:  ← optional: only when a cited URL passes the gate
+<sorted "- <id>: <url>" bullets, union of both audience fields' sources>
+[blank line]
+Labels: <sorted labels, comma+space joined>
+[blank line]
+voc-nexus-comment|v2|<event_id>
+```
+
+- Each audience section renders its field's `text` verbatim when the field
+  is non-`null`. When a field is `null`, its section renders a fixed line
+  instead of being omitted — the section header always appears, so a reader
+  never has to infer "no section" from a missing header:
+  - `customer_reply: null` → `No grounded customer-facing response found;
+    manual reply required.`
+  - `engineering_action: null` → `No grounded engineering action found;
+    manual triage required.`
+- The `Evidence:` block gate is unchanged from v1 (`_safe_http_url`), but the
+  source set is now the union of both audience fields' cited sources —
+  still deduplicated and sorted by id, with no indication in this block of
+  which audience cited which source (a reader wanting that mapping reads the
+  two sections above it).
+- The `Labels:` line and the marker-always-last rule are unchanged from v1.
+  The marker is `voc-nexus-comment|v2|<event_id>` — a new version segment,
+  never `v1`, so a v1 marker already looked up by a future adapter is never
+  confused with a v2 one.
+- `event_id` marker-safety rejection (`|`, newline, carriage return) is
+  unchanged.
+
+### Real example (v2, design target)
+
+Same inputs as the v1 example above, once evidence supports both audiences:
+
+```text
+VOC triage recommendations (dry-run):
+
+Customer reply:
+Your payment may show as pending for up to 10 minutes after a card timeout; it will resolve automatically and you will not be charged twice.
+
+Engineering action:
+Review the resolved guidance for PAY-42 concerning card timeout retries.
+
+Evidence:
+- PAY-42: https://jira.example.local/browse/PAY-42
+
+Labels: possible-duplicate
+
+voc-nexus-comment|v2|event-001
+```
+
+When no evidence exists at all (`customer_reply` and `engineering_action`
+both `null`), the two no-grounded lines both render and the `Evidence:`
+block is omitted, matching v1's no-evidence behavior:
+
+```text
+VOC triage recommendations (dry-run):
+
+Customer reply:
+No grounded customer-facing response found; manual reply required.
+
+Engineering action:
+No grounded engineering action found; manual triage required.
+
+Labels: needs-triage
+
+voc-nexus-comment|v2|event-001
+```
+
+## 2. Issue format v1 (implemented) / v2 (design target)
+
+### v1 (current renderer behavior)
 
 `render_issue(event, proposal, evidence)` returns a dict with exactly three
 keys: `summary`, `description`, `marker`.
@@ -135,6 +242,49 @@ voc-nexus-issue|v1|<event_id>
   "summary": "[VOC] Checkout card payment timeout",
   "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nRecommendations:\n- Review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\n\nvoc-nexus-issue|v1|event-001",
   "marker": "voc-nexus-issue|v1|event-001"
+}
+```
+
+### v2 (design target — not yet implemented)
+
+`render_issue(event, proposal, evidence)` returns the same three keys —
+`summary`, `description`, `marker` — unchanged. `summary` is unchanged. Only
+`description`'s middle section changes, from one `Recommendations:` section
+to two audience sections, built from six sections, always in this order:
+
+```text
+Context:
+
+- event_id: <event.event_id>
+- issue_key: <event.issue_key>
+- project: <event.project>
+
+Customer reply:
+<customer_reply.text, or the no-grounded-reply line>
+
+Engineering action:
+<engineering_action.text, or the no-grounded-action line>
+
+Evidence:  ← optional: only when a cited URL passes the gate
+<sorted "- <id>: <url>" bullets, union of both audience fields' sources>
+[blank line]
+Labels: <sorted labels, comma+space joined>
+
+voc-nexus-issue|v2|<event_id>
+```
+
+- The no-grounded-reply/no-grounded-action lines and the `Evidence:` union
+  rule are identical to the v2 comment format above.
+- `marker` is `voc-nexus-issue|v2|<event_id>` — the exact same string as the
+  description's last line, same as v1.
+
+### Real example (v2, design target)
+
+```json
+{
+  "summary": "[VOC] Checkout card payment timeout",
+  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nYour payment may show as pending for up to 10 minutes after a card timeout; it will resolve automatically and you will not be charged twice.\n\nEngineering action:\nReview the resolved guidance for PAY-42 concerning card timeout retries.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\n\nvoc-nexus-issue|v2|event-001",
+  "marker": "voc-nexus-issue|v2|event-001"
 }
 ```
 
@@ -199,3 +349,12 @@ factually correct or still current — see
 
 Both labels are proposal-time hints for human review, not automated
 dedupe/close decisions — the CLI never publishes or resolves anything.
+
+**Open question for the v2 slice, not decided here:** v2's `needs-triage`
+meaning ("no grounded recommendation was produced") stops being a single
+yes/no once there are two audience fields — evidence might ground
+`engineering_action` but not `customer_reply`, or vice versa. Whether that
+asymmetric case needs a third label, a documented precedence rule for the
+existing two, or is left implicit (a human reading the rendered `null`
+section already sees which audience is ungrounded) is tracked under
+GitHub issue #5, not settled by this document.

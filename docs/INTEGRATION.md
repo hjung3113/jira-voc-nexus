@@ -82,7 +82,14 @@ arbitrary value or certificate is put in code or docs for now.
    (issue: `voc-nexus-issue|v1|<event_id>`); see
    [docs/TEMPLATES.md](TEMPLATES.md) for the exact render and examples. The
    same `event_id` always produces the same marker, so querying the marker
-   before posting is itself the dedupe lookup.
+   before posting is itself the dedupe lookup. **Design note:** a v2
+   audience-split format (`voc-nexus-comment|v2|<event_id>` /
+   `voc-nexus-issue|v2|<event_id>`) is recorded in
+   [docs/TEMPLATES.md](TEMPLATES.md) and [docs/ARCHITECTURE.md](ARCHITECTURE.md)
+   but not yet implemented; when it lands, a real write adapter's marker
+   lookup must check both version prefixes for pre-existing v1 posts (per
+   `event_id` + payload fingerprint replay identity, not renderer version)
+   rather than assuming every stored event used the same format version.
 3. Record a lost publish response as `unknown`, and do not repost until
    confirmed by a marker lookup.
 4. Store the comment ID and success status, preserving existing labels while

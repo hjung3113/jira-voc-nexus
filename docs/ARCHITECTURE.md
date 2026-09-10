@@ -95,38 +95,96 @@ of factual accuracy, remediation content, or outcome. That an evidence ID
 exists and shares a lexical token is a structural link and a weak grounding
 check — not proof that a recommendation is factually accurate.
 
-## Proposal output contract
+## Proposal output contract (v2, audience-split)
+
+**Design decision recorded 2026-09-10** (this section), following the
+product decision on
+[GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9):
+dual-audience output — a user-ready reply and a separate internal
+engineering pointer — is in MVP scope. This supersedes the single
+undifferentiated `recommendations` list. **This is a design record; the
+engine/validator/renderer code change is a separate `voc-slice`
+implementation task — see "Implementation follow-up" below.**
 
 The object an engine returns, and the validator must pass, allows exactly
-these two fields:
+these three fields:
 
 ```json
 {
-  "recommendations": [
-    {"text": "string", "evidence_ids": ["known-id"]}
-  ],
+  "customer_reply": {"text": "string", "evidence_ids": ["known-id"]},
+  "engineering_action": {"text": "string", "evidence_ids": ["known-id"]},
   "labels": ["possible-duplicate"]
 }
 ```
 
+Either audience field may be `null` instead of an object when no grounded
+content exists for that audience — the engine must never invent a reply or
+action to fill a field, the same insufficient-evidence-means-hold rule as
+v1's empty `recommendations` list.
+
 The exact allowlist and limits:
 
-- The only top-level keys are `recommendations` and `labels`.
-- `recommendations` is a list with at most 5 items. Each item has only
-  `text` and `evidence_ids`.
-- `text` must be a string, non-empty after NFKC/whitespace normalization, and
-  at most 2,000 characters.
+- The only top-level keys are `customer_reply`, `engineering_action`, and
+  `labels`. All three keys must be present; either audience field's value
+  must be `null` or an object.
+- When present, an audience object has only `text` and `evidence_ids`.
+  `text` must be a string, non-empty after NFKC/whitespace normalization,
+  and at most 2,000 characters — the same bound as v1's per-item limit.
 - `evidence_ids` is 1 to 5 unique strings, referencing only IDs already
-  present in the ACL-filtered retrieval result. A recommendation's tokens
-  must overlap with at least one title/text token of its cited source.
+  present in the ACL-filtered retrieval result. `customer_reply` and
+  `engineering_action` are grounded **independently**: each field's text
+  tokens must overlap with at least one title/text token of its own cited
+  source set. A source cited by one audience field does not ground the
+  other.
 - `labels` is a list of unique strings; the only allowed values are
-  `needs-triage` and `possible-duplicate`.
-- When there is no evidence, the engine is not called, and `recommendations:
-  []`, `labels: ["needs-triage"]` is produced.
+  `needs-triage` and `possible-duplicate` — unchanged from v1. Whether a
+  third label dimension (e.g. distinguishing "engineering action only, no
+  customer reply produced") is needed is an open question for the
+  companion taxonomy slice (GitHub issue #5), not decided here.
+- When there is no evidence, the engine is not called, and
+  `{"customer_reply": null, "engineering_action": null, "labels":
+  ["needs-triage"]}` is produced — unchanged in spirit from v1.
 
-A model result that fails this schema fails outright. The recommendation
-text and structural evidence link are a safeguard for human review, not a
-guarantee of factual accuracy.
+A model result that fails this schema fails outright. A grounded field and
+its structural evidence link are a safeguard for human review, not a
+guarantee of factual accuracy, for either audience.
+
+### Why two single objects, not two lists
+
+v1 allowed up to 5 `recommendations` items with no audience distinction.
+This design intentionally narrows each audience to at most one grounded
+statement rather than porting the list shape twice (which would double the
+worst-case size and blur "the one thing to tell the customer" against "the
+one thing engineering should do"). If real usage shows a single audience
+needs multiple distinct evidence-grounded points, widening one field back to
+a bounded list is a compatible follow-up (additive to this record, not a
+breaking change to the other field).
+
+### Implementation follow-up (not done in this pass)
+
+The following code changes implement this record and are left for the next
+`voc-slice` task:
+
+- `nexus/proposals.py`: `validate_proposal` (new schema), `fixture_proposal`
+  (produce both fields instead of one list, still fixture/demo-only),
+  `render_comment`/`render_issue` (see the v2 templates in
+  [docs/TEMPLATES.md](TEMPLATES.md)).
+- `nexus/opencode.py`'s `_request_message`: the `output_contract` payload
+  and `instructions` string must be updated to (a) describe the new
+  `customer_reply`/`engineering_action` shape, (b) instruct the model to
+  return `null` rather than invent content when the evidence does not
+  support a grounded statement for that audience, and (c) instruct the
+  model to ground each audience field only in the sources it cites for that
+  field — this also closes the "OpenCode prompt carries no audience/label
+  policy" gap recorded in [docs/GAP_ANALYSIS.md](GAP_ANALYSIS.md). Exact
+  prompt wording is an implementation detail for that task, not fixed here.
+- `nexus/service.py`'s public result: replace the `recommendations` key
+  with `customer_reply` and `engineering_action` (see "Public result and
+  operational status" below).
+- Regression tests for: both-null (needs-triage) path, customer-only
+  grounded, engineering-only grounded, both grounded with disjoint evidence
+  sets, and a proposal where one field cites a source that only grounds the
+  other field (must fail validation).
 
 ## OpenCode boundary
 
@@ -163,16 +221,27 @@ rerank is never split into a separate model call or process.
 
 ## Public result and operational status
 
-The current public CLI result provides `dry_run`, `published`, `engine`,
-`demo_only`, `event_id`, `issue_key`, `comment`, `issue`, `labels`,
-`recommendations`, `state`.
+The current (implemented, v1) public CLI result provides `dry_run`,
+`published`, `engine`, `demo_only`, `event_id`, `issue_key`, `comment`,
+`issue`, `labels`, `recommendations`, `state`.
 
-The `comment` key is a string rendered with comment format v1
-(see [docs/TEMPLATES.md](TEMPLATES.md)); the `issue` key is an issue format v1
-object with exactly the `summary`, `description`, `marker` keys. Both formats
-end with a final marker line — `voc-nexus-comment|v1|<event_id>` or
-`voc-nexus-issue|v1|<event_id>` — and the same `event_id` always produces the
-same marker. `published` is always false, and `dry_run` is always true. The
+**Design record for the audience-split follow-up slice:** once the
+proposal output contract above lands, `recommendations` is replaced by
+`customer_reply` and `engineering_action` (each the same nullable object
+shape as the proposal contract) in this public result. This is a breaking
+change to the CLI's public JSON shape; it is acceptable now because
+`published` is always `false` and no real Jira consumer exists yet. Record
+the change in `HANDOFF.md` when it lands so anyone scripting against the
+current CLI output notices.
+
+The `comment` key is a string rendered with comment format v1 today, v2
+after the follow-up slice (see [docs/TEMPLATES.md](TEMPLATES.md)); the
+`issue` key is an issue format v1/v2 object with exactly the `summary`,
+`description`, `marker` keys. Both formats end with a final marker line —
+`voc-nexus-comment|v1|<event_id>` (v2: `voc-nexus-comment|v2|<event_id>`) or
+`voc-nexus-issue|v1|<event_id>` (v2: `voc-nexus-issue|v2|<event_id>`) — and
+the same `event_id` always produces the same marker for a given format
+version. `published` is always false, and `dry_run` is always true. The
 current local-only `state` value is `prepared`, which does not mean a
 successful Jira publish. A real Jira comment/label adapter must have its own
 separate lifecycle and reconciliation contract.

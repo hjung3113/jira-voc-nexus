@@ -181,20 +181,58 @@
   be submitted manually because its telemetry overlay blocked the injected
   Enter). All dispatches settled and terminals released.
 
+## Audience-split output contract design (2026-09-10, later session)
+
+- User decided [GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9):
+  dual-audience output **is** in MVP scope. Decision recorded as an issue comment and
+  the issue closed (`completed`).
+- Ran the `voc-workflow` skill to design next-slice candidate 1 from
+  `docs/GAP_ANALYSIS.md` (audience-split output contract). This session is **design
+  only** — no `nexus/*.py` code was touched, per explicit scope. Recorded:
+  - `docs/ARCHITECTURE.md`: new "Proposal output contract (v2, audience-split)" section
+    — engine output becomes `{"customer_reply": obj|null, "engineering_action":
+    obj|null, "labels": [...]}`, each audience field independently evidence-grounded,
+    max 2,000 chars, `null` (never invented) when ungrounded. Documents the rationale
+    for two single nullable objects instead of two 5-item lists, and lists the exact
+    implementation follow-up (`nexus/proposals.py`, `nexus/opencode.py`'s prompt/
+    instructions, `nexus/service.py`'s public result key rename, and the five
+    regression-test cases needed). Also updates "Public result and operational status"
+    to record the `recommendations` → `customer_reply`/`engineering_action` public CLI
+    key change as a breaking-but-acceptable change (nothing is published yet).
+  - `docs/TEMPLATES.md`: added v2 comment/issue format sections (design target) next to
+    the existing v1 sections (still the actual renderer behavior), with real-example
+    renders, and an open question under the label taxonomy section (asymmetric
+    grounding across the two audience fields — tracked under issue #5, not decided
+    here).
+  - `docs/INTEGRATION.md`: noted that a future write adapter's marker lookup must check
+    both `v1` and `v2` marker prefixes once v2 ships, since replay identity is
+    `event_id` + payload fingerprint, not renderer version (consistent with the
+    existing replay caveat).
+- Verification: `python3 -m unittest discover -s tests`: **177/177 passing** (3 PG
+  skip), unaffected — doc-only change. `git diff --check` clean.
+- Did **not** start any other gap issue in parallel, per this file's own prior
+  instruction. Issues #2, #5, #8 (which this design unblocks) are still open and
+  untouched.
+
 ## Next steps
 
-- **Start here next session**: [GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9)
-  needs a human product decision — is a user-ready response/workaround text in MVP scope
-  at all, or does the MVP stop at internal triage pointers? This gates #2 (audience-split
-  content), #5 (input contract fields), and #8 (routing), and shapes #3/#4/#6/#7. Answer
-  this before starting schema/contract work on any of the other gap issues.
-- Once #9 is answered, pick one of `docs/GAP_ANALYSIS.md`'s "Suggested next-slice
-  candidates" (audience-split output contract, taxonomy dimensions, or a nexus↔rag wiring
-  slice per issue #10) as the next `voc-workflow`/`voc-slice` task — do not start more than
-  one in parallel given the shared `nexus/proposals.py` and `docs/TEMPLATES.md` surface.
+- **Start here next session**: issue #9 is decided and closed (dual-audience output is
+  in MVP scope). The audience-split output contract is **designed** (see above,
+  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md` v2 sections) but
+  **not implemented**. The next `voc-slice` task is that implementation: update
+  `nexus/proposals.py` (`validate_proposal`, `fixture_proposal`, `render_comment`,
+  `render_issue`), `nexus/opencode.py`'s `_request_message` (`output_contract` +
+  `instructions`), and `nexus/service.py`'s public result key (`recommendations` →
+  `customer_reply`/`engineering_action`), plus the five regression-test cases listed
+  under "Implementation follow-up" in `docs/ARCHITECTURE.md`. Do not start #2, #5, or #8
+  in parallel — they consume this same contract once it exists in code, not before.
+- After that implementation slice lands, pick one of `docs/GAP_ANALYSIS.md`'s remaining
+  "Suggested next-slice candidates" (taxonomy dimensions, or a nexus↔rag wiring slice per
+  issue #10) as the following task — still one at a time given the shared
+  `nexus/proposals.py` and `docs/TEMPLATES.md` surface.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
-  issues #9/#10 above but not blocked on them). The write lifecycle will consume the
-  TEMPLATES.md formats and marker contract.
+  issue #10 above but not blocked on it). The write lifecycle will consume the
+  TEMPLATES.md formats and marker contract (v1 today, v2 once implemented).
 - Coordinator commits/pushes this state; no runnable Jira adapter and no new
   required dependency are in this commit.
