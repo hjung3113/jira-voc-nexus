@@ -77,7 +77,7 @@ alone").
 - **>= 100 queries** for a real adoption decision. Fewer than that and a
   single hard/easy query swings `recall@5` by a full percentage point or
   more, which is not a stable enough signal to gate a production decision
-  on. The 10-query set checked into `fixtures/rag/golden_set.json` is
+  on. The 11-query set checked into `fixtures/rag/golden_set.json` is
   sized only to exercise the harness in unit tests
   (`tests/test_rag_eval.py`) and the CLI smoke check in
   [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md) -- it is explicitly not a
@@ -172,11 +172,11 @@ swap rather than to golden-set noise.
 | bm25-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.07 | 0.25 |
 | vector-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.24 | 0.26 |
 | hybrid | 1.000 | 1.000 | 1.000 | 1.000 | 0.29 | 0.33 |
-| hybrid+rerank | 1.000 | 1.000 | 1.000 | 0.988 | 1.26 | 1.33 |
-| hybrid+rerank+expansion | 1.000 | 1.000 | 1.000 | 0.988 | 1.28 | 1.37 |
+| hybrid+rerank | 1.000 | 1.000 | 1.000 | 0.989 | 1.26 | 1.33 |
+| hybrid+rerank+expansion | 1.000 | 1.000 | 1.000 | 0.989 | 1.28 | 1.37 |
 ```
 
-(actual output on this repo's `fixtures/rag/golden_set.json`, 10 queries --
+(actual output on this repo's `fixtures/rag/golden_set.json`, 11 queries --
 see the caveat above: this small set is a harness smoke check, not
 adoption evidence.)
 

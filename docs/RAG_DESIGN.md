@@ -436,3 +436,16 @@ environment. None of this changes the adopted runtime described above or in
 evaluation-gate evidence (golden set >= 100 queries, the metric comparisons,
 ACL leakage = 0) described above, gathered per
 [guides/RAG_EVALUATION.md](../guides/RAG_EVALUATION.md).
+
+The local harness also enforces its own evaluation and context boundaries:
+`run_evaluation` rejects empty or duplicate golden IDs, empty sets, duplicate
+variant names/cutoffs, unknown or document-type-excluded relevance IDs, and
+duplicate/unknown returned IDs; it calls the retrieval seam with at least
+`max(10, *cutoffs)` so the fixed MRR@10 and nDCG@10 metrics are true top-10
+measurements. `ContextBuilder` keeps canonical evidence ahead of supporting
+knowledge, links resolutions to selected problem issue keys, deduplicates
+repeated hits, and treats the omission notice as part of the hard character
+budget. The file-based CLI stages state atomically with authoritative JSON and
+an optional disposable registry sidecar, then rebuilds and closes only its
+owned temporary SQLite registry. These are POC-local correctness decisions,
+not production adoption or proof of real ACL/provider behavior.

@@ -4,10 +4,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from rag.context import ContextBuilder, ContextConfig
 from rag.contracts import IndexDocument
+from rag.errors import RagInputError
 from rag.registry import RegistryExpansion
 from rag.retrieval import RetrievalQuery, RetrievalResult, ScoredDoc
 
@@ -22,7 +24,7 @@ def _doc(doc_id, title, text, document_type, source_id=None):
         system="LogWarehouse",
         component="Parser",
         entity_ids=(),
-        trust_level="supporting",
+        trust_level="supporting" if document_type.startswith("jira") else "canonical",
         source_id=source_id if source_id is not None else doc_id,
         updated_at="",
         title=title,
@@ -35,6 +37,18 @@ def _sd(doc):
 
 
 class SectionOrderTests(unittest.TestCase):
+    def test_draft_wiki_is_not_presented_as_canonical_or_budgeted_first(self):
+        canonical = _doc("wiki:c", "Approved", "definition", "domain_knowledge")
+        draft = replace(canonical, doc_id="wiki:d", title="Draft", text="speculation", trust_level="supporting")
+        result = RetrievalResult(fused=(), final=(_sd(draft), _sd(canonical)), expansion=None, acl_filtered_count=0)
+        built = ContextBuilder().build(RetrievalQuery(text="q"), result)
+        self.assertEqual([s.heading for s in built.sections], ["Canonical Domain", "Supporting Knowledge"])
+        self.assertEqual(built.sections[0].source, "wiki:c")
+        budget = len("Canonical Domain\nApproved\ndefinition")
+        limited = ContextBuilder(ContextConfig(max_chars=budget)).build(RetrievalQuery(text="q"), result)
+        self.assertEqual([s.source for s in limited.sections], ["wiki:c"])
+        self.assertNotIn("speculation", limited.text)
+
     def test_section_order_is_domain_system_relationship_jira(self):
         domain = _doc("wiki:domain-1", "Domain title", "domain text", "domain_knowledge")
         system = _doc("wiki:system-1", "System title", "system text", "system_knowledge")
@@ -114,7 +128,8 @@ class BudgetTests(unittest.TestCase):
 
         self.assertEqual([s.heading for s in built.sections], ["Canonical Domain"])
         self.assertEqual(built.omitted_sections, ("System",))
-        self.assertTrue(built.text.endswith("Omitted: System"))
+        self.assertLessEqual(len(built.text), 40)
+        self.assertNotIn("Omitted:", built.text)
 
     def test_no_mid_line_truncation(self):
         # A section that alone exceeds the budget is entirely omitted, never
@@ -124,8 +139,39 @@ class BudgetTests(unittest.TestCase):
         built = ContextBuilder(ContextConfig(max_chars=10)).build(RetrievalQuery(text="q"), result)
         self.assertEqual(built.sections, ())
         self.assertEqual(built.omitted_sections, ("Canonical Domain",))
-        self.assertEqual(built.text, "Omitted: Canonical Domain")
+        self.assertEqual(built.text, "")
         self.assertNotIn("z", built.text)  # the oversized section's content never leaks in partially
+
+    def test_zero_budget_and_invalid_budgets(self):
+        doc = _doc("a", "Domain", "body", "domain_knowledge")
+        result = RetrievalResult(fused=(), final=(_sd(doc),), expansion=None, acl_filtered_count=0)
+        built = ContextBuilder(ContextConfig(max_chars=0)).build(RetrievalQuery(text="q"), result)
+        self.assertEqual(built.text, "")
+        self.assertEqual(built.omitted_sections, ("Canonical Domain",))
+        for value in (-1, True, 2.5, "10"):
+            with self.subTest(value=value), self.assertRaises(RagInputError):
+                ContextConfig(max_chars=value)
+
+    def test_omission_notice_included_only_when_it_fits(self):
+        doc = _doc("a", "Domain", "x" * 500, "domain_knowledge")
+        result = RetrievalResult(fused=(), final=(_sd(doc),), expansion=None, acl_filtered_count=0)
+        built = ContextBuilder(ContextConfig(max_chars=40)).build(RetrievalQuery(text="q"), result)
+        self.assertEqual(built.text, "Omitted: Canonical Domain")
+        self.assertLessEqual(len(built.text), 40)
+
+    def test_duplicate_hits_do_not_consume_budget_twice(self):
+        doc = _doc("a", "Domain", "body", "domain_knowledge")
+        result = RetrievalResult(fused=(), final=(_sd(doc), _sd(doc)), expansion=None, acl_filtered_count=0)
+        built = ContextBuilder().build(RetrievalQuery(text="q"), result)
+        self.assertEqual(len(built.sections), 1)
+
+    def test_orphan_resolution_cannot_enter_selected_problem_context(self):
+        problem = _doc("A:problem", "Problem", "body", "jira_problem", "A")
+        orphan = _doc("B:resolution", "Resolution", "unselected evidence", "jira_resolution", "B")
+        result = RetrievalResult(fused=(), final=(_sd(problem), _sd(orphan)), expansion=None, acl_filtered_count=0)
+        built = ContextBuilder().build(RetrievalQuery(text="q"), result, resolution_docs=(orphan,))
+        self.assertEqual([s.heading for s in built.sections], ["Historical Jira A"])
+        self.assertNotIn("unselected evidence", built.text)
 
     def test_everything_fits_yields_no_omissions(self):
         small_doc = _doc("wiki:d1", "Domain", "short text", "domain_knowledge")

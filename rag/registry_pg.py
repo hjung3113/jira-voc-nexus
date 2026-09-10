@@ -14,11 +14,16 @@ against a real server.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .contracts import KnowledgeEntity, KnowledgeRelation, RELATION_TYPES
 from .errors import RagInputError
-from .registry import RegistryExpansion, SqliteKnowledgeRegistry
+from .registry import (
+    RegistryExpansion,
+    SqliteKnowledgeRegistry,
+    _normalize_entity_scope,
+    _validate_max_hops,
+)
 
 DDL = """
 CREATE TABLE IF NOT EXISTS knowledge_entity (
@@ -102,32 +107,90 @@ class PostgresKnowledgeRegistry:
                 ) from exc
         self._conn.commit()
 
-    def neighbors(self, entity_id: str) -> List[KnowledgeRelation]:
+    def neighbors(
+        self,
+        entity_id: str,
+        *,
+        allowed_entity_ids: Optional[Iterable[str]] = None,
+        entity_allowlist: Optional[Iterable[str]] = None,
+    ) -> List[KnowledgeRelation]:
+        scope = _normalize_entity_scope(allowed_entity_ids, entity_allowlist)
+        if not isinstance(entity_id, str) or not entity_id:
+            raise RagInputError("entity_id must be a non-empty string")
+        if scope is not None and entity_id not in scope:
+            return []
         with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT source_id, relation_type, target_id FROM knowledge_relation
-                WHERE source_id = %s OR target_id = %s
-                ORDER BY relation_type, source_id, target_id
-                """,
-                (entity_id, entity_id),
-            )
+            if scope is None:
+                cur.execute(
+                    """
+                    SELECT source_id, relation_type, target_id FROM knowledge_relation
+                    WHERE source_id = %s OR target_id = %s
+                    ORDER BY relation_type, source_id, target_id
+                    """,
+                    (entity_id, entity_id),
+                )
+            else:
+                allowed = list(sorted(scope))
+                cur.execute(
+                    """
+                    SELECT source_id, relation_type, target_id FROM knowledge_relation
+                    WHERE (source_id = %s OR target_id = %s)
+                      AND source_id = ANY(%s)
+                      AND target_id = ANY(%s)
+                    ORDER BY relation_type, source_id, target_id
+                    """,
+                    (entity_id, entity_id, allowed, allowed),
+                )
             rows = cur.fetchall()
         return [KnowledgeRelation(source_id=r[0], relation_type=r[1], target_id=r[2]) for r in rows]
 
-    def expand(self, entity_names: Iterable[str], max_hops: int = 1) -> RegistryExpansion:
+    def expand(
+        self,
+        entity_names: Iterable[str],
+        max_hops: int = 1,
+        *,
+        allowed_entity_ids: Optional[Iterable[str]] = None,
+        entity_allowlist: Optional[Iterable[str]] = None,
+    ) -> RegistryExpansion:
         # Same BFS contract as SqliteKnowledgeRegistry.expand; delegated via
         # an in-memory mirror built from this connection's rows so the
         # traversal algorithm has exactly one implementation to keep in sync.
+        # The mirror is a throwaway sqlite connection per call -- close it
+        # once the expansion is computed instead of leaking it.
+        max_hops = _validate_max_hops(max_hops)
+        scope = _normalize_entity_scope(allowed_entity_ids, entity_allowlist)
+        if scope == frozenset():
+            return RegistryExpansion(entity_ids=(), paths=())
         mirror = SqliteKnowledgeRegistry(":memory:")
-        with self._conn.cursor() as cur:
-            cur.execute("SELECT id, type, name, system, description FROM knowledge_entity")
-            for row in cur.fetchall():
-                mirror.upsert_entity(KnowledgeEntity(id=row[0], type=row[1], name=row[2], system=row[3], description=row[4]))
-            cur.execute("SELECT source_id, relation_type, target_id FROM knowledge_relation")
-            for row in cur.fetchall():
-                mirror.add_relation(KnowledgeRelation(source_id=row[0], relation_type=row[1], target_id=row[2]))
-        return mirror.expand(entity_names, max_hops=max_hops)
+        try:
+            with self._conn.cursor() as cur:
+                if scope is None:
+                    cur.execute("SELECT id, type, name, system, description FROM knowledge_entity")
+                else:
+                    allowed = list(sorted(scope))
+                    cur.execute(
+                        "SELECT id, type, name, system, description FROM knowledge_entity "
+                        "WHERE id = ANY(%s)",
+                        (allowed,),
+                    )
+                for row in cur.fetchall():
+                    mirror.upsert_entity(KnowledgeEntity(id=row[0], type=row[1], name=row[2], system=row[3], description=row[4]))
+                if scope is None:
+                    cur.execute("SELECT source_id, relation_type, target_id FROM knowledge_relation")
+                else:
+                    cur.execute(
+                        "SELECT source_id, relation_type, target_id FROM knowledge_relation "
+                        "WHERE source_id = ANY(%s) AND target_id = ANY(%s)",
+                        (allowed, allowed),
+                    )
+                for row in cur.fetchall():
+                    mirror.add_relation(KnowledgeRelation(source_id=row[0], relation_type=row[1], target_id=row[2]))
+            return mirror.expand(entity_names, max_hops=max_hops, allowed_entity_ids=scope)
+        finally:
+            mirror.close()
+
+    def close(self) -> None:
+        self._conn.close()
 
     def dump_payload(self) -> Dict[str, Any]:
         with self._conn.cursor() as cur:

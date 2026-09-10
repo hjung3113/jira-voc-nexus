@@ -31,7 +31,7 @@ from .contracts import (
 )
 from .errors import RagInputError
 from .eval import default_local_variants, load_golden_set, render_markdown_table, run_evaluation
-from .registry import SqliteKnowledgeRegistry
+from .registry import KnowledgeRegistry, SqliteKnowledgeRegistry
 from .retrieval import (
     HashingEmbedding,
     LexicalIndex,
@@ -51,11 +51,27 @@ def _load_fixture_payloads(fixtures_dir: str) -> Dict[str, Any]:
         with open(path, encoding="utf-8") as stream:
             return json.load(stream)
 
-    return {
+    payloads = {
         "issues": read("normalized_issues.json"),
         "wiki_pages": read("wiki_pages.json"),
         "registry": read("registry.json"),
     }
+    for name in ("issues", "wiki_pages"):
+        if not isinstance(payloads[name], list):
+            raise RagInputError(f"fixture {name} must be a JSON list")
+    _validate_registry_payload(payloads["registry"])
+    return payloads
+
+
+def _validate_registry_payload(payload: Any) -> None:
+    if (not isinstance(payload, dict) or set(payload) != {"entities", "relations"}
+            or any(not isinstance(payload[name], list) for name in ("entities", "relations"))):
+        raise RagInputError("registry must contain entities and relations JSON lists")
+
+
+def _validate_document_ids(documents: Sequence[IndexDocument]) -> None:
+    if len({doc.doc_id for doc in documents}) != len(documents):
+        raise RagInputError("corpus contains duplicate document IDs")
 
 
 def _build_documents(payloads: Dict[str, Any]) -> List[IndexDocument]:
@@ -66,6 +82,7 @@ def _build_documents(payloads: Dict[str, Any]) -> List[IndexDocument]:
     for raw_page in payloads["wiki_pages"]:
         page = parse_wiki_page(raw_page)
         documents.append(wiki_to_document(page))
+    _validate_document_ids(documents)
     return documents
 
 
@@ -90,24 +107,34 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
     state_dir, registry_db_path = _state_paths(args.state)
     os.makedirs(state_dir, exist_ok=True)
-    if os.path.exists(registry_db_path):
-        os.remove(registry_db_path)
-    registry = SqliteKnowledgeRegistry.from_payload(
-        registry_db_path, payloads["registry"]["entities"], payloads["registry"]["relations"]
-    )
-
     # The registry is embedded in the state file itself (one file holds
     # everything needed to reconstruct every pipeline). registry_db_path is
     # written too, but only as an optional cache for external tools -- query
     # never requires it and rebuilds a fresh registry from the embedded
     # payload instead (see _cmd_query / _build_pipeline).
-    state = {
-        "documents": [_document_to_payload(doc) for doc in documents],
-        "registry": registry.dump_payload(),
-        "registry_db_path": registry_db_path,
-    }
-    with open(args.state, "w", encoding="utf-8") as stream:
-        json.dump(state, stream, ensure_ascii=False, indent=2, sort_keys=True)
+    # Stage on the same filesystem so each replacement is atomic. JSON is
+    # authoritative; the disposable sidecar may be newer if interrupted
+    # between replacements, but query never reads that cache.
+    with tempfile.TemporaryDirectory(prefix=".rag-index-", dir=state_dir) as staging:
+        staged_registry = os.path.join(staging, "registry.db")
+        registry = SqliteKnowledgeRegistry.from_payload(
+            staged_registry, payloads["registry"]["entities"], payloads["registry"]["relations"]
+        )
+        try:
+            state = {
+                "documents": [_document_to_payload(doc) for doc in documents],
+                "registry": registry.dump_payload(),
+                "registry_db_path": registry_db_path,
+            }
+        finally:
+            registry.close()
+        staged_state = os.path.join(staging, "state.json")
+        with open(staged_state, "w", encoding="utf-8") as stream:
+            json.dump(state, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged_registry, registry_db_path)
+        os.replace(staged_state, args.state)
 
     print(f"indexed {len(documents)} documents -> {args.state}")
     print(f"registry -> {registry_db_path}")
@@ -119,19 +146,21 @@ def _load_state(state_path: str) -> Tuple[List[IndexDocument], Dict[str, Any]]:
         state = json.load(stream)
     if not isinstance(state, dict) or "documents" not in state or "registry" not in state:
         raise RagInputError("state file must contain 'documents' and 'registry'")
+    if not isinstance(state["documents"], list):
+        raise RagInputError("state documents must be a JSON list")
     documents = [parse_index_document(item) for item in state["documents"]]
+    _validate_document_ids(documents)
     registry_payload = state["registry"]
-    if (
-        not isinstance(registry_payload, dict)
-        or "entities" not in registry_payload
-        or "relations" not in registry_payload
-    ):
-        raise RagInputError("state 'registry' must contain 'entities' and 'relations'")
+    _validate_registry_payload(registry_payload)
     return documents, registry_payload
 
 
 def _build_pipeline(
-    documents: Sequence[IndexDocument], registry_payload: Dict[str, Any], registry_build_path: str
+    documents: Sequence[IndexDocument],
+    registry_payload: Dict[str, Any],
+    registry_build_path: str,
+    *,
+    registry: Optional[KnowledgeRegistry] = None,
 ) -> RetrievalPipeline:
     lexical = LexicalIndex(documents)
     vector = VectorIndex(documents, HashingEmbedding())
@@ -139,9 +168,10 @@ def _build_pipeline(
     # Always rebuilt fresh from the state file's embedded registry payload
     # (a temp DB), never from the sidecar .registry.db cache -- so query
     # works even if the sidecar was never copied alongside state.json.
-    registry = SqliteKnowledgeRegistry.from_payload(
-        registry_build_path, registry_payload["entities"], registry_payload["relations"]
-    )
+    if registry is None:
+        registry = SqliteKnowledgeRegistry.from_payload(
+            registry_build_path, registry_payload["entities"], registry_payload["relations"]
+        )
     return RetrievalPipeline(lexical=lexical, vector=vector, reranker=reranker, registry=registry, acl=AllowAllAcl())
 
 
@@ -156,51 +186,62 @@ def _cmd_query(args: argparse.Namespace) -> int:
     documents, registry_payload = _load_state(args.state)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        pipeline = _build_pipeline(documents, registry_payload, os.path.join(tmp_dir, "registry.db"))
-
-        error_codes = tuple(args.error_code or ())
-        project = args.project or ""
-
-        problem_query = RetrievalQuery(
-            text=args.text, project=project, error_codes=error_codes, document_types=("jira_problem",)
+        registry = SqliteKnowledgeRegistry.from_payload(
+            os.path.join(tmp_dir, "registry.db"), registry_payload["entities"], registry_payload["relations"]
         )
-        problem_result = pipeline.retrieve(problem_query)
+        try:
+            pipeline = _build_pipeline(
+                documents, registry_payload, os.path.join(tmp_dir, "registry.db"), registry=registry
+            )
 
-        knowledge_query = RetrievalQuery(
-            text=args.text, project=project, error_codes=error_codes, document_types=_KNOWLEDGE_DOCUMENT_TYPES
-        )
-        knowledge_result = pipeline.retrieve(knowledge_query)
+            error_codes = tuple(args.error_code or ())
+            project = args.project or ""
 
-        resolution_corpus = [doc for doc in documents if doc.document_type == "jira_resolution"]
-        issue_keys = [sd.doc.source_id for sd in problem_result.final if sd.doc.document_type == "jira_problem"]
-        resolution_docs = fetch_resolution_context(issue_keys, resolution_corpus, AllowAllAcl())
+            problem_query = RetrievalQuery(
+                text=args.text, project=project, error_codes=error_codes, document_types=("jira_problem",)
+            )
+            problem_result = pipeline.retrieve(problem_query)
 
-        merged_result = RetrievalResult(
-            fused=problem_result.fused,
-            final=knowledge_result.final + problem_result.final,
-            expansion=problem_result.expansion,
-            acl_filtered_count=problem_result.acl_filtered_count + knowledge_result.acl_filtered_count,
-        )
+            knowledge_query = RetrievalQuery(
+                text=args.text, project=project, error_codes=error_codes, document_types=_KNOWLEDGE_DOCUMENT_TYPES
+            )
+            knowledge_result = pipeline.retrieve(knowledge_query)
 
-        built = ContextBuilder().build(problem_query, merged_result, resolution_docs=resolution_docs)
+            resolution_corpus = [doc for doc in documents if doc.document_type == "jira_resolution"]
+            issue_keys = [sd.doc.source_id for sd in problem_result.final if sd.doc.document_type == "jira_problem"]
+            resolution_docs = fetch_resolution_context(issue_keys, resolution_corpus, AllowAllAcl())
 
-        if args.json:
-            payload = {
-                "query": {"text": args.text, "project": project, "error_codes": list(error_codes)},
-                "problem_final": [_scored_doc_payload(sd) for sd in problem_result.final],
-                "resolution_docs": [doc.doc_id for doc in resolution_docs],
-                "context": {
-                    "text": built.text,
-                    "sections": [
-                        {"heading": section.heading, "lines": list(section.lines), "source": section.source}
-                        for section in built.sections
-                    ],
-                    "omitted_sections": list(built.omitted_sections),
-                },
-            }
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            print(built.text)
+            merged_result = RetrievalResult(
+                fused=problem_result.fused,
+                final=knowledge_result.final + problem_result.final,
+                expansion=problem_result.expansion,
+                acl_filtered_count=problem_result.acl_filtered_count + knowledge_result.acl_filtered_count,
+            )
+
+            built = ContextBuilder().build(problem_query, merged_result, resolution_docs=resolution_docs)
+
+            if args.json:
+                payload = {
+                    "query": {"text": args.text, "project": project, "error_codes": list(error_codes)},
+                    "problem_final": [_scored_doc_payload(sd) for sd in problem_result.final],
+                    "resolution_docs": [doc.doc_id for doc in resolution_docs],
+                    "context": {
+                        "text": built.text,
+                        "sections": [
+                            {"heading": section.heading, "lines": list(section.lines), "source": section.source}
+                            for section in built.sections
+                        ],
+                        "omitted_sections": list(built.omitted_sections),
+                    },
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(built.text)
+        finally:
+            # The temporary registry is owned by this command.  The lexical
+            # and vector indexes are shared by both query passes and have no
+            # close lifecycle, so only the registry connection is closed.
+            registry.close()
     return 0
 
 
@@ -211,11 +252,18 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         registry_db_path = os.path.join(tmp_dir, "registry.db")
-        SqliteKnowledgeRegistry.from_payload(
+        seed_registry = SqliteKnowledgeRegistry.from_payload(
             registry_db_path, payloads["registry"]["entities"], payloads["registry"]["relations"]
         )
-        variants = default_local_variants(documents, registry_db_path)
-        report = run_evaluation(variants, golden)
+        try:
+            # The seed connection is needed only to materialize the database
+            # file.  Each expansion pipeline opens its own connection and
+            # run_evaluation closes that owned connection via its variant
+            # cleanup callback.
+            variants = default_local_variants(documents, registry_db_path)
+            report = run_evaluation(variants, golden)
+        finally:
+            seed_registry.close()
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -259,6 +307,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.handler(args)
     except (RagInputError, FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except OSError:
+        print("error: unable to read or write local RAG files", file=sys.stderr)
         return 1
 
 

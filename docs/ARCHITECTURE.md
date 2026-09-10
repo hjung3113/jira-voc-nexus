@@ -21,6 +21,37 @@ synthetic trusted-filter boundary that prevents cross-project fixture leaks.
 Production ACL must be re-implemented before search/model calls, using a
 trusted server principal and a real ACL adapter.
 
+## Local RAG proof-of-concept boundary
+
+The `rag/` package and `python3 -m rag index|query|eval` commands are a local
+proof of concept for the proposed retrieval design; they are **not adopted
+production architecture** and do not change the nexus runtime above. The
+default path is Python 3.9+ standard library plus SQLite, synthetic fixtures,
+and deterministic local stand-ins. It performs no network calls, does not
+accept Jira ingress, and does not publish Jira changes.
+
+The local RAG implementation makes these bounded decisions explicit:
+
+- `eval` validates a non-empty golden set, unique non-blank relevant IDs,
+  unique variants and cutoffs, corpus membership and document-type filters,
+  and duplicate/unknown returned IDs. It requests at least the evaluation
+  depth (`max(10, *cutoffs)`) from the retrieval seam, so MRR@10 and nDCG@10
+  are measured against a real top-10 result rather than a serving top-5
+  truncation.
+- `ContextBuilder` orders canonical evidence before supporting evidence,
+  links resolution text only to selected problem issue keys, deduplicates
+  repeated hits, and never exceeds `max_chars` including an omission notice.
+- `index` stages both the authoritative JSON state and an optional disposable
+  SQLite sidecar before replacing either destination. Query reconstructs its
+  temporary registry from embedded JSON, and evaluation/query close only
+  registries they own; shared lexical/vector indexes are not closed as a side
+  effect.
+
+These controls are local correctness and safety checks, not evidence of
+production ACL enforcement, real-provider quality, OpenSearch/PostgreSQL
+integration, or adoption. Adoption remains gated by the real, sanitized
+golden-set and ACL-leakage evidence in [RAG_DESIGN.md](RAG_DESIGN.md).
+
 ## Decisions
 
 ### Static code owns the flow

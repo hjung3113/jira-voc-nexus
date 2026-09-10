@@ -160,9 +160,13 @@ a BM25-dominant poison doc carrying the exact boosted error code) when
 writing the same test against a real adapter wiring (OpenSearch/PG) after
 a swap, per [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md)'s smoke
 checklist. For `OpenSearchBackend` specifically, also re-read its ACL
-caveat in that guide (Swap 2) -- the oversample-and-filter workaround is
-weaker than the local indexes' pre-filter, so this recipe is *more*
-important to run there, not less.
+caveat in that guide (Swap 2) -- the filter is applied server-side inside
+the query (a `terms` filter on the lexical channel, the same filter inside
+the k-NN clause on the dense channel) and the response parser fails closed
+if a hit falls outside it, but this recipe is still the only way to prove
+your *wiring* actually threads `allowed_doc_ids` from your `PreRetrievalAcl`
+into that query -- the library-level mechanism existing is not the same as
+your deployment code calling it correctly.
 
 ## The "ACL leakage = 0" evaluation method
 
@@ -195,7 +199,11 @@ evidence before adopting any given pipeline configuration for production.
 5. Re-run this whenever the ACL implementation changes, whenever a new
    access-scope class is introduced, and on some regular cadence
    thereafter (e.g. alongside the golden-set evaluation cadence) -- ACL
-   correctness is not a one-time proof.
+   correctness is not a one-time proof. See
+   [guides/RAG_OPERATIONS.md](RAG_OPERATIONS.md#monitoring) for how to
+   wire this cadence and `acl_filtered_count` into ongoing monitoring, and
+   that guide's "Fail-closed operational rules" for what an operator must
+   never do to route around an ACL failure during an incident.
 
 ## Verification checklist
 
@@ -217,5 +225,6 @@ evidence before adopting any given pipeline configuration for production.
 | --- | --- | --- |
 | Poison doc appears in `result.fused` or `result.final` | ACL wired after scoring instead of before, or `acl=AllowAllAcl()` left as the default in a real deployment | Re-read the pre-retrieval boundary contract above; confirm the `acl=` argument passed to `RetrievalPipeline` |
 | `acl_filtered_count == 0` on a query that should have hidden documents | ACL predicate always returns `True` (misconfigured principal, or an ACL bug), or the corpus genuinely has nothing to hide for this query | Check with a poison-document test first -- if that also shows leakage, the ACL predicate itself is broken |
-| `OpenSearchBackend`-backed pipeline occasionally under-fills `top_k` even with ACL correctly denying nothing extra | Oversample factor (`_OPENSEARCH_ACL_OVERSAMPLE_FACTOR = 5`) too small for how much of the corpus this principal cannot see | Increase the oversample factor in your deployment's wrapper, or move to OpenSearch-side filtered aliases/document-level security (see [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md) Swap 2) |
+| `OpenSearchBackend`-backed pipeline raises `RagInputError: ... response violated the document ACL` | The OpenSearch server ignored or mis-applied the `terms`/k-NN `filter` clause built from `allowed_doc_ids` | This is the adapter failing closed as designed -- investigate the OpenSearch-side filter/mapping, do not catch and suppress this error (see [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md) Swap 2) |
+| `OpenSearchBackend`-backed pipeline raises `RagInputError: allowed_doc_ids is too large` | This principal's ACL-visible corpus exceeds the 10,000-id cap (`_OPENSEARCH_MAX_ALLOWED_DOC_IDS`) | Narrow the access-scope class, or move to OpenSearch-side filtered aliases/document-level security (see [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md) Swap 2) |
 | Leakage golden set passes but a real user reports seeing something they shouldn't | Leakage golden set does not cover that user's access-scope class | Add the missing class to the leakage golden set; this is a golden-set coverage gap, not necessarily an ACL bug |

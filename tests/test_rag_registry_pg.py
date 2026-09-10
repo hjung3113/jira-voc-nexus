@@ -29,6 +29,57 @@ class MissingPsycopgExtraTests(unittest.TestCase):
         self.assertIn("pip install", str(ctx.exception))
 
 
+def _fake_connected_registry():
+    """Build a PostgresKnowledgeRegistry over a mocked psycopg connection so
+    its lifecycle/adapter-shape behavior (close(), the expand() mirror) can
+    be exercised without a real Postgres server. Returns (registry, fake_conn)."""
+
+    fake_cursor = mock.MagicMock()
+    fake_cursor.fetchall.return_value = []
+    fake_conn = mock.MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg = mock.MagicMock()
+    fake_psycopg.connect.return_value = fake_conn
+
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        from rag.registry_pg import PostgresKnowledgeRegistry
+
+        registry = PostgresKnowledgeRegistry(datasource="postgresql://example/db")
+    return registry, fake_conn
+
+
+class LifecycleAndMirrorLeakTests(unittest.TestCase):
+    def test_close_closes_the_underlying_connection(self):
+        registry, fake_conn = _fake_connected_registry()
+        registry.close()
+        fake_conn.close.assert_called_once()
+
+    def test_expand_closes_its_in_memory_mirror_after_use(self):
+        # expand() builds a fresh in-memory SqliteKnowledgeRegistry mirror on
+        # every call; that mirror connection must be closed once the BFS
+        # result is computed instead of being leaked on every retrieval.
+        registry, _fake_conn = _fake_connected_registry()
+        with mock.patch("rag.registry_pg.SqliteKnowledgeRegistry") as MockMirror:
+            mirror_instance = MockMirror.return_value
+            mirror_instance.expand.return_value = "sentinel-expansion"
+
+            result = registry.expand(["ParserJob"], max_hops=1)
+
+            mirror_instance.close.assert_called_once()
+            self.assertEqual(result, "sentinel-expansion")
+
+    def test_expand_closes_its_mirror_even_when_the_bfs_raises(self):
+        registry, _fake_conn = _fake_connected_registry()
+        with mock.patch("rag.registry_pg.SqliteKnowledgeRegistry") as MockMirror:
+            mirror_instance = MockMirror.return_value
+            mirror_instance.expand.side_effect = RagInputError("boom")
+
+            with self.assertRaises(RagInputError):
+                registry.expand(["ParserJob"], max_hops=1)
+
+            mirror_instance.close.assert_called_once()
+
+
 @unittest.skipUnless(DATASOURCE, "set NEXUS_RAG_PG_TEST_DATASOURCE to run PG registry conformance tests")
 class PostgresRegistryConformanceTests(unittest.TestCase):
     def setUp(self):

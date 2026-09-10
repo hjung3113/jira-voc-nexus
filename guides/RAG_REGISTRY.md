@@ -228,6 +228,11 @@ logic.
       `ParserJob` hop-1/hop-2 cases do).
 - [ ] `add_relation` on an already-seeded relation raises `RagInputError`
       (duplicate rejection working) rather than silently double-inserting.
+- [ ] The dry-run diff artifact from each write is retained afterward, not
+      discarded -- see
+      [guides/RAG_OPERATIONS.md](RAG_OPERATIONS.md#rollback) for why it is
+      needed to construct a reverse batch if a bad write is discovered
+      later.
 
 ## Failure modes
 

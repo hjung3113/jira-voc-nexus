@@ -7,6 +7,7 @@ from pathlib import Path
 
 from rag.acl import AllowAllAcl, PreRetrievalAcl, apply_acl
 from rag.contracts import IndexDocument, issue_to_documents, parse_normalized_issue, parse_wiki_page, wiki_to_document
+from rag.errors import RagInputError
 from rag.registry import SqliteKnowledgeRegistry
 from rag.retrieval import (
     HashingEmbedding,
@@ -19,7 +20,10 @@ from rag.retrieval import (
     RetrievalQuery,
     ScoredDoc,
     VectorIndex,
+    _build_dense_search_body,
     _build_index_settings,
+    _build_lexical_search_body,
+    _parse_opensearch_response,
     fetch_resolution_context,
     rrf_fuse,
     tokenize,
@@ -33,14 +37,14 @@ def load_fixture(name):
         return json.load(stream)
 
 
-def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", system="", component="", source_id=None):
+def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", system="", component="", source_id=None, entity_ids=()):
     return IndexDocument(
         doc_id=doc_id,
         source_type="jira",
         document_type=document_type,
         system=system,
         component=component,
-        entity_ids=(),
+        entity_ids=entity_ids,
         trust_level=trust_level,
         source_id=source_id if source_id is not None else doc_id,
         updated_at="",
@@ -166,6 +170,91 @@ class OpenSearchBackendTests(unittest.TestCase):
         settings = _build_index_settings(1024)
         self.assertEqual(settings["mappings"]["properties"]["embedding"]["dimension"], 1024)
         self.assertEqual(INDEX_SETTINGS["mappings"]["properties"]["embedding"]["dimension"], HashingEmbedding.DIM)
+
+    def test_search_bodies_place_the_acl_filter_in_the_channel_correct_shape(self):
+        allowed = ("a", "b")
+        lexical = _build_lexical_search_body("query", 5, allowed)
+        self.assertEqual(
+            lexical["query"]["bool"]["filter"],
+            [{"terms": {"doc_id": ["a", "b"]}}],
+        )
+        dense = _build_dense_search_body([0.1, 0.2], 5, allowed)
+        self.assertEqual(
+            dense["query"]["knn"]["embedding"]["filter"],
+            {"terms": {"doc_id": ["a", "b"]}},
+        )
+        self.assertEqual(dense["query"]["knn"]["embedding"]["k"], 5)
+        self.assertNotIn("filter", _build_lexical_search_body("query", 5, None)["query"]["bool"])
+
+    def test_index_settings_declares_lucene_hnsw_for_filtered_knn(self):
+        settings = _build_index_settings(1024)
+        embedding = settings["mappings"]["properties"]["embedding"]
+        self.assertEqual(embedding["method"]["engine"], "lucene")
+        self.assertEqual(embedding["method"]["name"], "hnsw")
+        self.assertEqual(embedding["dimension"], 1024)
+
+    def test_parse_response_fails_closed_on_leaked_hit_beyond_top_k(self):
+        def _hit(doc, score):
+            return {
+                "_id": doc.doc_id,
+                "_score": score,
+                "_source": {
+                    "doc_id": doc.doc_id,
+                    "source_type": doc.source_type,
+                    "document_type": doc.document_type,
+                    "system": doc.system,
+                    "component": doc.component,
+                    "entity_ids": list(doc.entity_ids),
+                    "trust_level": doc.trust_level,
+                    "source_id": doc.source_id,
+                    "updated_at": doc.updated_at,
+                    "title": doc.title,
+                    "text": doc.text,
+                },
+            }
+
+        allowed_doc = _doc("ok", "title", "text")
+        leaked_doc = _doc("leak", "title", "text")
+        response = {
+            "hits": {
+                "hits": [_hit(allowed_doc, 1.0), _hit(leaked_doc, 0.5)],
+                "total": {"value": 2},
+            }
+        }
+        # The leak sits beyond top_k=1: a parser that stopped at top_k would
+        # miss it, so this pins the walk-every-hit-then-truncate contract.
+        with self.assertRaises(RagInputError):
+            _parse_opensearch_response(response, top_k=1, channel="lexical", allowed_doc_ids=("ok",))
+
+    def test_parse_response_truncates_to_top_k_after_validating_all_hits(self):
+        def _hit(doc_id, score):
+            doc = _doc(doc_id, "title", "text")
+            return {
+                "_id": doc_id,
+                "_score": score,
+                "_source": {
+                    "doc_id": doc.doc_id,
+                    "source_type": doc.source_type,
+                    "document_type": doc.document_type,
+                    "system": doc.system,
+                    "component": doc.component,
+                    "entity_ids": list(doc.entity_ids),
+                    "trust_level": doc.trust_level,
+                    "source_id": doc.source_id,
+                    "updated_at": doc.updated_at,
+                    "title": doc.title,
+                    "text": doc.text,
+                },
+            }
+
+        response = {
+            "hits": {
+                "hits": [_hit("a", 1.0), _hit("b", 0.5)],
+                "total": {"value": 2},
+            }
+        }
+        results = _parse_opensearch_response(response, top_k=1, channel="lexical", allowed_doc_ids=("a", "b"))
+        self.assertEqual([r.doc_id for r in results], ["a"])
 
 
 class RrfFuseTests(unittest.TestCase):
@@ -315,6 +404,45 @@ class RetrieveAclEnforcementTests(unittest.TestCase):
         self.assertEqual(result.acl_filtered_count, 1)
 
 
+class CorpusConsistencyTests(unittest.TestCase):
+    def test_matching_lexical_and_vector_corpora_construct_cleanly(self):
+        docs = [_doc("a", "a", "a"), _doc("b", "b", "b")]
+        # Must not raise: this is the normal construction pattern used by
+        # every other test in this module (same doc objects fed to both
+        # indexes).
+        RetrievalPipeline(
+            lexical=LexicalIndex(docs),
+            vector=VectorIndex(docs, HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+        )
+
+    def test_vector_doc_id_absent_from_lexical_corpus_is_rejected(self):
+        lexical_docs = [_doc("a", "a", "a")]
+        vector_docs = [_doc("a", "a", "a"), _doc("stowaway", "x", "x")]
+        with self.assertRaises(RagInputError):
+            RetrievalPipeline(
+                lexical=LexicalIndex(lexical_docs),
+                vector=VectorIndex(vector_docs, HashingEmbedding()),
+                reranker=LexicalOverlapReranker(),
+            )
+
+    def test_vector_doc_diverging_from_lexical_doc_under_same_id_is_rejected(self):
+        # Same doc_id "shared" in both corpora, but the vector copy carries
+        # a sensitive component/text the lexical copy does not. An
+        # ACL that hides "Secret" would compute allowed_doc_ids from the
+        # lexical (public-looking) copy and let "shared" through, after
+        # which id-only filtering would surface the vector index's sensitive
+        # copy under that same id. Must fail closed at construction.
+        lexical_docs = [_doc("shared", "public title", "public text", component="Public")]
+        vector_docs = [_doc("shared", "secret title", "secret text", component="Secret")]
+        with self.assertRaises(RagInputError):
+            RetrievalPipeline(
+                lexical=LexicalIndex(lexical_docs),
+                vector=VectorIndex(vector_docs, HashingEmbedding()),
+                reranker=LexicalOverlapReranker(),
+            )
+
+
 class DocumentTypesFilterTests(unittest.TestCase):
     def test_pipeline_filters_by_document_type(self):
         problem = _doc("p1", "parser problem", "parser failed with 4107", document_type="jira_problem")
@@ -362,6 +490,136 @@ class FetchResolutionContextTests(unittest.TestCase):
             ["OPS-201", "OPS-999", "OPS-missing"], resolution_corpus, DenyByComponentAcl("Secret")
         )
         self.assertEqual([d.doc_id for d in results], ["OPS-201:resolution"])
+
+
+class TopKOverrideTests(unittest.TestCase):
+    def setUp(self):
+        self.docs = [_doc(f"d{i}", f"parser error 4107 item {i}", f"parser error 4107 item {i}") for i in range(8)]
+        self.pipeline = RetrievalPipeline(
+            lexical=LexicalIndex(self.docs),
+            vector=VectorIndex(self.docs, HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+            config=RetrievalConfig(
+                top_k_lexical=2, top_k_vector=2, top_k_registry=2, fuse_top_n=2, final_top_k=2
+            ),
+        )
+
+    def test_top_k_none_keeps_serving_default(self):
+        result = self.pipeline.retrieve(RetrievalQuery(text="parser error 4107", document_types=("jira_problem",)))
+        self.assertEqual(len(result.final), 2)
+
+    def test_top_k_raises_every_candidate_stage_limit(self):
+        result = self.pipeline.retrieve(
+            RetrievalQuery(text="parser error 4107", document_types=("jira_problem",)), top_k=6
+        )
+        self.assertEqual(len(result.final), 6)
+        self.assertEqual(len(result.fused), 6)
+
+    def test_top_k_never_lowers_a_higher_configured_limit(self):
+        pipeline = RetrievalPipeline(
+            lexical=LexicalIndex(self.docs),
+            vector=VectorIndex(self.docs, HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+            config=RetrievalConfig(final_top_k=5),
+        )
+        result = pipeline.retrieve(
+            RetrievalQuery(text="parser error 4107", document_types=("jira_problem",)), top_k=1
+        )
+        self.assertEqual(len(result.final), 5)
+
+    def test_non_positive_top_k_rejected(self):
+        query = RetrievalQuery(text="parser error 4107", document_types=("jira_problem",))
+        with self.assertRaises(RagInputError):
+            self.pipeline.retrieve(query, top_k=0)
+        with self.assertRaises(RagInputError):
+            self.pipeline.retrieve(query, top_k=-1)
+        with self.assertRaises(RagInputError):
+            self.pipeline.retrieve(query, top_k="5")
+        with self.assertRaises(RagInputError):
+            self.pipeline.retrieve(query, top_k=True)
+
+
+class RegistryLinkedChannelTests(unittest.TestCase):
+    def setUp(self):
+        self.linked = _doc(
+            "linked", "totally unrelated title", "totally unrelated body text about refunds",
+            entity_ids=("job:parser",),
+        )
+        self.decoy = _doc("decoy", "another unrelated doc", "another unrelated document about invoices")
+        self.docs = [self.linked, self.decoy]
+
+        db_path = tempfile.mkstemp(suffix=".db")[1]
+        self.addCleanup(lambda: Path(db_path).unlink(missing_ok=True))
+        self.registry = SqliteKnowledgeRegistry.from_payload(
+            db_path,
+            [{"id": "job:parser", "type": "job", "name": "ParserJob", "system": "S", "description": ""}],
+            [],
+        )
+        self.pipeline = RetrievalPipeline(
+            lexical=LexicalIndex(self.docs),
+            vector=VectorIndex(self.docs, HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+            registry=self.registry,
+        )
+
+    def test_entity_linked_doc_enters_fused_candidates_without_text_overlap(self):
+        # The query text shares no tokens with "linked"'s title/text, so
+        # neither BM25 nor the hashing-embedding cosine channel would ever
+        # surface it; only the registry expansion channel can.
+        query = RetrievalQuery(
+            text="parser aborts inserting raw data",
+            entities=("ParserJob",),
+            document_types=("jira_problem",),
+        )
+        result = self.pipeline.retrieve(query)
+        self.assertIn("linked", [sd.doc_id for sd in result.fused])
+        linked_hit = next(sd for sd in result.fused if sd.doc_id == "linked")
+        self.assertIn("registry-linked", linked_hit.reasons)
+
+    def test_no_entities_yields_no_registry_channel_contribution(self):
+        query = RetrievalQuery(text="parser aborts inserting raw data", document_types=("jira_problem",))
+        result = self.pipeline.retrieve(query)
+        self.assertIsNone(result.expansion)
+        for scored in result.fused:
+            self.assertNotIn("registry-linked", scored.reasons)
+
+
+class EntityAclFailClosedTests(unittest.TestCase):
+    def setUp(self):
+        # "hidden" is a direct neighbor of the query's seed entity, but no
+        # visible document names it. A restricted ACL's trusted entity scope
+        # must not include it, so expansion cannot traverse to (or through)
+        # it even though it is only one hop away.
+        entities = [
+            {"id": "seed", "type": "job", "name": "SeedJob", "system": "S", "description": ""},
+            {"id": "hidden", "type": "component", "name": "HiddenComponent", "system": "S", "description": ""},
+        ]
+        relations = [{"source_id": "seed", "relation_type": "USES", "target_id": "hidden"}]
+        db_path = tempfile.mkstemp(suffix=".db")[1]
+        self.addCleanup(lambda: Path(db_path).unlink(missing_ok=True))
+        self.registry = SqliteKnowledgeRegistry.from_payload(db_path, entities, relations)
+        self.visible_doc = _doc("visible", "seed doc", "seed doc text", entity_ids=("seed",))
+        self.docs = [self.visible_doc]
+
+    def _pipeline(self, acl):
+        return RetrievalPipeline(
+            lexical=LexicalIndex(self.docs),
+            vector=VectorIndex(self.docs, HashingEmbedding()),
+            reranker=LexicalOverlapReranker(),
+            registry=self.registry,
+            acl=acl,
+        )
+
+    def test_allow_all_acl_expands_to_the_neighbor(self):
+        pipeline = self._pipeline(AllowAllAcl())
+        result = pipeline.retrieve(RetrievalQuery(text="seed doc text", entities=("SeedJob",)))
+        self.assertIn("hidden", result.expansion.entity_ids)
+
+    def test_restricted_acl_cannot_reach_entity_no_visible_doc_names(self):
+        pipeline = self._pipeline(DenyByComponentAcl("nonexistent-component"))
+        result = pipeline.retrieve(RetrievalQuery(text="seed doc text", entities=("SeedJob",)))
+        self.assertEqual(result.expansion.entity_ids, ("seed",))
+        self.assertNotIn("hidden", result.expansion.entity_ids)
 
 
 class FullPipelineSmokeTests(unittest.TestCase):

@@ -11,7 +11,10 @@ is self-contained: it restates the contracts it uses rather than assuming
 you have read the code first, but for full design rationale also see
 [docs/RAG_DESIGN.md](../docs/RAG_DESIGN.md) (architecture, trust ordering,
 evaluation gate) and [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
-(execution boundary this toolkit must not cross).
+(execution boundary this toolkit must not cross). For what happens after a
+successful deployment -- backup/restore, safe reindexing, rollback, and
+monitoring/fail-closed operational rules -- see
+[guides/RAG_OPERATIONS.md](RAG_OPERATIONS.md).
 
 ## Prerequisites
 
@@ -188,42 +191,62 @@ Wire it in: `VectorIndex(documents, HttpEmbeddingFunction())` in place of
 `rag.retrieval.OpenSearchBackend` is a real adapter already in the repo
 (lazy-imports `opensearchpy`). It exposes the same
 `search(query, top_k, allowed_doc_ids=None) -> List[ScoredDoc]` shape as
-`LexicalIndex`/`VectorIndex`, so `RetrievalPipeline` can take either the
-pair of local indexes or a single `OpenSearchBackend` in a custom pipeline
-wiring (`RetrievalPipeline` currently expects a `lexical` and `vector`
-argument separately; if you route both through one hybrid OpenSearch
-query, pass the same `OpenSearchBackend` instance as both `lexical` and
-`vector`, and rely on `rrf_fuse` naturally deduplicating identical
-`doc_id`s across the two "channels" -- or fork `RetrievalPipeline.retrieve`
-in your deployment code if you want a single-call hybrid path instead of
-two).
+`LexicalIndex`/`VectorIndex`, so `RetrievalPipeline` (which still expects
+a `lexical` and `vector` argument separately) can take one real explicit
+channel on each side instead of the pair of local indexes. Use the two
+dedicated subclasses -- `OpenSearchLexicalIndex` (BM25/Nori) and
+`OpenSearchVectorIndex` (k-NN dense; `OpenSearchDenseIndex` is the same
+class under an alternate name) -- rather than constructing a bare
+`OpenSearchBackend` and juggling its `channel=` argument yourself:
+
+```python
+from rag.retrieval import OpenSearchLexicalIndex, OpenSearchVectorIndex
+
+lexical = OpenSearchLexicalIndex(
+    hosts=os.environ["NEXUS_RAG_OS_URL"].split(","),
+    index_name=os.environ.get("NEXUS_RAG_OS_INDEX", "nexus-rag"),
+    embedder=HttpEmbeddingFunction(),  # unused on the lexical channel, but part of the shared constructor
+    documents=documents,               # the same IndexDocument corpus you indexed
+    embedding_dimension=1024,
+)
+vector = OpenSearchVectorIndex(
+    hosts=os.environ["NEXUS_RAG_OS_URL"].split(","),
+    index_name=os.environ.get("NEXUS_RAG_OS_INDEX", "nexus-rag"),
+    embedder=HttpEmbeddingFunction(),
+    documents=documents,
+    embedding_dimension=1024,
+)
+pipeline = RetrievalPipeline(lexical=lexical, vector=vector, reranker=reranker, acl=your_acl)
+```
+
+Both point at the same `index_name` (one physical index serves both
+channels; `channel=` only changes which query body `_search_channel`
+builds) and each performs its own single-channel OpenSearch request, so
+lexical/dense failures, latencies, and hit counts stay independently
+observable per [guides/RAG_OPERATIONS.md](RAG_OPERATIONS.md#monitoring) --
+never collapse them into one hybrid query inside OpenSearch itself, or you
+lose that per-channel signal and the explicit RRF step in
+`RetrievalPipeline.retrieve` becomes redundant with whatever blending
+OpenSearch did internally.
 
 `RetrievalPipeline.__init__` reads `self._lexical.documents` at
 construction time to compute the ACL-visible corpus before any search --
-so `OpenSearchBackend` must be constructed with the same `documents` you
-indexed into OpenSearch, via its `documents=` constructor argument, or
-`RetrievalPipeline` will see an empty corpus and every query will return
-nothing.
+so each `OpenSearchBackend`/subclass instance must be constructed with the
+same `documents` you indexed into OpenSearch, via its `documents=`
+constructor argument, or `RetrievalPipeline` will see an empty corpus and
+every query will return nothing.
 
 The Nori-analyzer BM25 + knn mapping is the module constant
 `rag.retrieval.INDEX_SETTINGS`; its knn vector dimension defaults to
 `HashingEmbedding.DIM` (256) and must be set to match whatever embedder
-you actually pass in -- `OpenSearchBackend`'s `embedding_dimension=`
-constructor argument controls this (`ensure_index` builds the index body
-from a copy of `INDEX_SETTINGS` with that dimension substituted in, so the
-module constant itself is never mutated):
+you actually pass in -- `embedding_dimension=` controls this (`ensure_index`
+builds the index body from a copy of `INDEX_SETTINGS` with that dimension
+substituted in, so the module constant itself is never mutated). Call
+`ensure_index()` once (on either channel instance -- it is the same index)
+before indexing:
 
 ```python
-from rag.retrieval import OpenSearchBackend
-
-backend = OpenSearchBackend(
-    hosts=os.environ["NEXUS_RAG_OS_URL"].split(","),
-    index_name=os.environ.get("NEXUS_RAG_OS_INDEX", "nexus-rag"),
-    embedder=HttpEmbeddingFunction(),  # or HashingEmbedding() to test wiring only
-    documents=documents,               # the same IndexDocument corpus you are indexing
-    embedding_dimension=1024,          # match HttpEmbeddingFunction's dimension; HashingEmbedding is 256
-)
-backend.ensure_index()  # creates the index (INDEX_SETTINGS + the dimension above) if missing
+lexical.ensure_index()  # creates the index (INDEX_SETTINGS + the dimension above) if missing
 ```
 
 Never mix vectors from `HashingEmbedding` and a real BGE-M3 endpoint (or
@@ -237,14 +260,105 @@ installed on the OpenSearch cluster (the Korean analyzer used throughout
 the fixtures and golden set) and knn enabled (`index.knn: true`, already
 set in `INDEX_SETTINGS`).
 
+### Bulk-uploading documents and refreshing
+
+`OpenSearchBackend`/its subclasses only build queries and parse responses
+(`ensure_index`, `search_lexical`, `search_dense`) -- there is no
+`index_documents`/`bulk` method in `rag/` today. Bulk-load the same
+`documents=` corpus you constructed the backend with, using the standard
+`opensearchpy.helpers.bulk` helper directly against a client, keyed on the
+same `_OPENSEARCH_SOURCE_FIELDS` the response parser requires
+(`doc_id`, `source_type`, `document_type`, `system`, `component`,
+`entity_ids`, `trust_level`, `source_id`, `updated_at`, `title`, `text`,
+plus `embedding`):
+
+```python
+from opensearchpy import OpenSearch
+from opensearchpy.helpers import bulk
+
+def bulk_index(client: OpenSearch, index_name: str, documents, embedder) -> None:
+    vectors = embedder.embed([doc.text for doc in documents])
+    actions = [
+        {
+            "_index": index_name,
+            "_id": doc.doc_id,
+            "_source": {
+                "doc_id": doc.doc_id, "source_type": doc.source_type,
+                "document_type": doc.document_type, "system": doc.system,
+                "component": doc.component, "entity_ids": list(doc.entity_ids),
+                "trust_level": doc.trust_level, "source_id": doc.source_id,
+                "updated_at": doc.updated_at, "title": doc.title, "text": doc.text,
+                "embedding": vector,
+            },
+        }
+        for doc, vector in zip(documents, vectors)
+    ]
+    success, errors = bulk(client, actions, refresh=False, raise_on_error=False)
+    if errors:
+        # Do not silently swallow partial bulk failures -- surface which
+        # doc_ids failed so a re-run/reindex can target exactly those, per
+        # guides/RAG_OPERATIONS.md's "Reindex and rollback" section.
+        raise RagInputError(f"OpenSearch bulk index had {len(errors)} failing document(s): {errors[:5]}")
+    client.indices.refresh(index=index_name)
+```
+
+Call `refresh` explicitly (as above) or rely on OpenSearch's periodic
+background refresh interval before running the smoke checklist below --
+a document that was just bulk-indexed is not guaranteed to be searchable
+until a refresh happens. Bulk-load into the **new** `index_name` from
+"Reindexing without downtime" in
+[guides/RAG_OPERATIONS.md](RAG_OPERATIONS.md#reindexing-without-downtime),
+never in place against the index live callers are reading.
+
+### Auth/TLS configuration
+
+`OpenSearchBackend._connect` only builds `OpenSearch(hosts=self._hosts)`
+with no auth/TLS arguments -- it does not read any auth/TLS environment
+variable itself. Configure auth/TLS by constructing your own
+`opensearchpy.OpenSearch` client (reading credentials/certs from your own
+environment variables, e.g. `NEXUS_RAG_OS_USER`/`NEXUS_RAG_OS_PASSWORD` or
+a client-cert path) and passing it via the `client=` constructor argument,
+which `_connect` uses as-is instead of building a new unauthenticated one:
+
+```python
+from opensearchpy import OpenSearch
+
+client = OpenSearch(
+    hosts=os.environ["NEXUS_RAG_OS_URL"].split(","),
+    http_auth=(os.environ["NEXUS_RAG_OS_USER"], os.environ["NEXUS_RAG_OS_PASSWORD"]),
+    use_ssl=True,
+    verify_certs=True,
+    ca_certs=os.environ.get("NEXUS_RAG_OS_CA_CERT"),  # None uses the system trust store
+)
+lexical = OpenSearchLexicalIndex(hosts=[...], index_name=..., embedder=..., documents=documents, client=client)
+vector = OpenSearchVectorIndex(hosts=[...], index_name=..., embedder=..., documents=documents, client=client)
+```
+
+Passing the same pre-built `client` to both channel instances shares one
+connection pool; `hosts=` is still required by the constructor but is
+unused once `client=` is supplied. Never put the credential value itself
+in this repository, `.local/`, or a log line -- only the environment
+variable name, per the "Secrets policy" above.
+
 **ACL caveat** (read [guides/RAG_ACL.md](RAG_ACL.md) fully before using
-this in a multi-principal deployment): `OpenSearchBackend.search` cannot
-filter *inside* OpenSearch's own scoring the way the local indexes do. It
-oversamples (`top_k * 5`) and post-filters by `allowed_doc_ids`, which can
-still under-fill `top_k` in the worst case. Configure OpenSearch-side
-filtered aliases or document-level security scoped to the caller's ACL for
-a real multi-principal deployment; do not rely on the oversample-and-filter
-workaround alone.
+this in a multi-principal deployment): `OpenSearchBackend` filters
+*inside* OpenSearch's own scoring, not after -- `allowed_doc_ids` becomes a
+`terms` filter in the lexical channel's bool `filter` clause and the same
+filter inside the dense channel's k-NN clause (the efficient filtered-kNN
+shape the Lucene HNSW mapping above supports), so a denied document never
+consumes a `top_k` slot or a relevance score. The response parser then
+fails closed: if a hit's `doc_id` is not in the requested `allowed_doc_ids`
+set anyway (a server that ignored or mis-applied the filter), it raises
+`RagInputError` rather than silently dropping or re-ranking that hit.
+`allowed_doc_ids` is capped at 10,000 entries
+(`_OPENSEARCH_MAX_ALLOWED_DOC_IDS`); a principal visible to more documents
+than that raises `RagInputError` rather than truncating the ACL scope --
+size your access-scope classes (or move to OpenSearch-side filtered
+aliases/document-level security for very broad principals) with that cap
+in mind. Still run the poison-document recipe
+([guides/RAG_ACL.md](RAG_ACL.md#poison-document-test-recipe)) against this
+adapter after any swap: it proves the filter is actually being passed
+through your wiring, not just that the mechanism exists in the library.
 
 ## Swap 3: `LexicalOverlapReranker` -> `BgeRerankerAdapter`
 
@@ -333,6 +447,8 @@ degrading the ACL or evidence contract to keep a broken adapter "working".
 | --- | --- | --- |
 | `RagInputError: ... is required for ...; install it with: pip install ...` | Optional extra not installed | Install section above |
 | `RagInputError: embedding dimension mismatch` | `HttpEmbeddingFunction` model changed dimension, or wrong endpoint | Swap 1 |
-| Search results include documents the caller should not see | ACL applied after scoring, or `OpenSearchBackend` oversample too small | [guides/RAG_ACL.md](RAG_ACL.md), Swap 2 caveat |
+| Search results include documents the caller should not see | ACL applied after scoring, `acl=AllowAllAcl()` left in a real deployment, or a custom pipeline that filters results *after* they come back from search instead of passing `allowed_doc_ids` into the query | [guides/RAG_ACL.md](RAG_ACL.md), Swap 2 caveat |
+| `RagInputError: OpenSearch ... response violated the document ACL` | The OpenSearch server ignored or mis-applied the `terms`/k-NN `filter` clause -- the adapter fails closed rather than dropping the offending hit | Investigate the OpenSearch-side filter/mapping first; do not catch and discard this error to "keep serving" |
+| `RagInputError: allowed_doc_ids is too large` | Principal's ACL-visible corpus exceeds the 10,000-id cap (`_OPENSEARCH_MAX_ALLOWED_DOC_IDS`) | Swap 2's ACL caveat -- narrow the access-scope class or move to OpenSearch-side filtered aliases/document-level security |
 | `RagInputError: duplicate relation: ...` | Re-seeding without checking existing rows first | [guides/RAG_REGISTRY.md](RAG_REGISTRY.md) |
 | Golden-set `recall@5` regresses after a swap | Real adapter's ranking differs from the local stand-in it was tuned against | [guides/RAG_EVALUATION.md](RAG_EVALUATION.md) |

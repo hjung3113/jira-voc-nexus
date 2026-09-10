@@ -20,8 +20,10 @@ import copy
 import hashlib
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from numbers import Real
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
     from typing import Protocol
@@ -271,6 +273,40 @@ class VectorIndex:
 # --------------------------------------------------------------------------
 
 
+def _registry_linked_results(
+    documents: Sequence[IndexDocument],
+    allowed_doc_ids: Set[str],
+    linked_entity_ids: Sequence[str],
+    top_k: int,
+) -> List[ScoredDoc]:
+    """Bounded, ACL-visible RRF channel fed by knowledge-registry expansion.
+
+    A document is a hit here purely by ``entity_ids`` overlap with the
+    registry's expanded entity set -- independent of lexical/vector
+    similarity to the query text -- so a relation-linked document with no
+    textual overlap can still enter the fused candidate set. ``allowed_doc_ids``
+    is the same pre-computed ACL + document-type scope the lexical/vector
+    channels use, so this channel can never surface a hidden document.
+    """
+
+    if not linked_entity_ids or top_k <= 0:
+        return []
+    linked_set = set(linked_entity_ids)
+    scored: List[Tuple[int, str, IndexDocument]] = []
+    for doc in documents:
+        if doc.doc_id not in allowed_doc_ids:
+            continue
+        overlap = len(linked_set.intersection(doc.entity_ids))
+        if overlap:
+            scored.append((overlap, doc.doc_id, doc))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    top = scored[: max(0, top_k)]
+    return [
+        ScoredDoc(doc_id=doc.doc_id, score=float(overlap), doc=doc, reasons=("registry-linked",))
+        for overlap, _, doc in top
+    ]
+
+
 def rrf_fuse(result_lists: Sequence[Sequence[ScoredDoc]], k: int = 60, top_n: int = 30) -> List[ScoredDoc]:
     scores: Dict[str, float] = {}
     docs: Dict[str, IndexDocument] = {}
@@ -300,6 +336,15 @@ def rrf_fuse(result_lists: Sequence[Sequence[ScoredDoc]], k: int = 60, top_n: in
 
 class Reranker(Protocol):
     def rerank(self, query: str, docs: Sequence[ScoredDoc], top_k: int) -> List[ScoredDoc]: ...
+
+
+class SearchIndex(Protocol):
+    @property
+    def documents(self) -> Tuple[IndexDocument, ...]: ...
+
+    def search(
+        self, query: str, top_k: int, allowed_doc_ids: Optional[Set[str]] = None
+    ) -> List[ScoredDoc]: ...
 
 
 _TRUST_RANK = {level: idx for idx, level in enumerate(TRUST_LEVELS)}
@@ -394,7 +439,25 @@ INDEX_SETTINGS = {
     },
 }
 
-_OPENSEARCH_ACL_OVERSAMPLE_FACTOR = 5
+_OPENSEARCH_MAX_TOP_K = 10_000
+_OPENSEARCH_MAX_RESPONSE_HITS = 10_000
+_OPENSEARCH_MAX_ALLOWED_DOC_IDS = 10_000
+_OPENSEARCH_CHANNELS = ("lexical", "dense")
+_OPENSEARCH_SOURCE_FIELDS = frozenset(
+    {
+        "doc_id",
+        "source_type",
+        "document_type",
+        "system",
+        "component",
+        "entity_ids",
+        "trust_level",
+        "source_id",
+        "updated_at",
+        "title",
+        "text",
+    }
+)
 
 
 def _build_index_settings(embedding_dimension: int) -> Dict[str, Any]:
@@ -405,30 +468,43 @@ def _build_index_settings(embedding_dimension: int) -> Dict[str, Any]:
     differ, so an index must be built for exactly one embedder."""
 
     settings = copy.deepcopy(INDEX_SETTINGS)
-    settings["mappings"]["properties"]["embedding"]["dimension"] = embedding_dimension
+    embedding = settings["mappings"]["properties"]["embedding"]
+    embedding["dimension"] = embedding_dimension
+    # Lucene HNSW is what supports the efficient filtered k-NN shape the
+    # dense channel relies on (knn.filter); the default nmslib engine does
+    # not take that filter, so an index created without this method could
+    # error or silently ignore the ACL filter.
+    embedding["method"] = {
+        "name": "hnsw",
+        "space_type": "cosine",
+        "engine": "lucene",
+        "parameters": {"ef_construction": 128, "m": 24},
+    }
     return settings
 
 
 class OpenSearchBackend:
-    """Real hybrid (BM25/Nori + knn) OpenSearch adapter. Integration-unverified here.
+    """Real OpenSearch lexical/dense channel adapter.
 
-    ACL note: unlike :class:`LexicalIndex`/:class:`VectorIndex`, this
-    backend cannot filter the candidate set *inside* OpenSearch's own
-    scoring without per-principal filtered aliases or document-level
-    security configured on the cluster. When ``allowed_doc_ids`` is passed
-    to :meth:`search`, this adapter fetches an oversized page
-    (``top_k * _OPENSEARCH_ACL_OVERSAMPLE_FACTOR``) and post-filters down to
-    the allowed set, then truncates to ``top_k``. That still lets enough
-    hidden documents occupy result slots to under-fill ``top_k`` in the
-    worst case. Production deployments serving multiple principals should
-    configure OpenSearch-side filtered aliases / document-level security
-    scoped to the caller's ACL instead of relying on this workaround.
+    OpenSearch is queried once per channel.  The legacy single backend object
+    exposes both :meth:`search_lexical` and :meth:`search_dense`; its
+    ``channel`` constructor argument controls what the generic ``search``
+    method does when the object is passed as one side of a pipeline.  A
+    pipeline may therefore either pass one backend instance (the pipeline
+    selects the two explicit methods) or use the convenience
+    :class:`OpenSearchLexicalIndex` and :class:`OpenSearchVectorIndex`
+    wrappers.
 
-    ``documents`` is the local corpus mirror :class:`RetrievalPipeline`
-    reads at construction time (``self.documents = self._lexical.documents``)
-    to compute the ACL-visible id set before any search -- pass the same
-    document set you indexed into OpenSearch so pre-scoring ACL filtering
-    works the same way it does for the local indexes.
+    ``allowed_doc_ids`` is translated into an OpenSearch ``terms`` filter.
+    Lexical search places that filter in the bool ``filter`` clause.  Dense
+    search places the same filter inside the k-NN clause, which is the
+    efficient-filter shape supported by the Lucene HNSW mapping below.  The
+    adapter never post-filters an otherwise-scored result set: if a provider
+    response contains an id outside the requested scope, it fails closed.
+
+    ``documents`` is the local corpus mirror used by
+    :class:`RetrievalPipeline` for ACL and corpus-consistency checks.  It must
+    be the same document set indexed under ``index_name``.
     """
 
     def __init__(
@@ -438,17 +514,34 @@ class OpenSearchBackend:
         embedder: EmbeddingFunction,
         documents: Sequence[IndexDocument] = (),
         embedding_dimension: Optional[int] = None,
+        *,
+        channel: str = "lexical",
+        client: Any = None,
     ) -> None:
+        if channel not in _OPENSEARCH_CHANNELS:
+            raise RagInputError(f"OpenSearch channel must be one of {_OPENSEARCH_CHANNELS}")
+        if not isinstance(index_name, str) or not index_name.strip():
+            raise RagInputError("OpenSearch index_name must be a non-empty string")
+        if embedding_dimension is not None and (
+            type(embedding_dimension) is not int or embedding_dimension <= 0
+        ):
+            raise RagInputError("OpenSearch embedding_dimension must be a positive integer")
         self._hosts = list(hosts)
         self._index_name = index_name
         self._embedder = embedder
-        self._client = None
+        self._client = client
+        self._owns_client = client is None
         self._documents = tuple(documents)
         self._embedding_dimension = embedding_dimension if embedding_dimension is not None else HashingEmbedding.DIM
+        self._channel = channel
 
     @property
     def documents(self) -> Tuple[IndexDocument, ...]:
         return self._documents
+
+    @property
+    def channel(self) -> str:
+        return self._channel
 
     def _connect(self):
         if self._client is not None:
@@ -460,55 +553,309 @@ class OpenSearchBackend:
                 "opensearch-py is required for OpenSearchBackend; "
                 "install it with: pip install 'jira-voc-nexus[rag-platform]'"
             ) from exc
-        self._client = OpenSearch(hosts=self._hosts)
+        try:
+            self._client = OpenSearch(hosts=self._hosts)
+        except Exception as exc:  # pragma: no cover - provider-specific integration path
+            raise RagInputError("OpenSearch client initialization failed") from exc
         return self._client
 
     def ensure_index(self) -> None:
         client = self._connect()
-        if not client.indices.exists(index=self._index_name):
-            client.indices.create(index=self._index_name, body=_build_index_settings(self._embedding_dimension))
+        try:
+            exists = client.indices.exists(index=self._index_name)
+            if not isinstance(exists, bool):
+                raise RagInputError("OpenSearch index-exists response was malformed")
+            if not exists:
+                client.indices.create(index=self._index_name, body=_build_index_settings(self._embedding_dimension))
+        except RagInputError:
+            raise
+        except Exception as exc:  # pragma: no cover - provider-specific integration path
+            raise RagInputError("OpenSearch index creation failed") from exc
 
-    def search(
+    def _channel_backend(self, channel: str) -> "OpenSearchBackend":
+        return OpenSearchBackend(
+            hosts=self._hosts,
+            index_name=self._index_name,
+            embedder=self._embedder,
+            documents=self._documents,
+            embedding_dimension=self._embedding_dimension,
+            channel=channel,
+            client=self._client,
+        )
+
+    def lexical_index(self) -> "OpenSearchBackend":
+        """Return a lexical view sharing this adapter's client when available."""
+
+        return self._channel_backend("lexical")
+
+    def vector_index(self) -> "OpenSearchBackend":
+        """Return a dense view sharing this adapter's client when available."""
+
+        return self._channel_backend("dense")
+
+    def search(self, query: str, top_k: int, allowed_doc_ids: Optional[Set[str]] = None) -> List[ScoredDoc]:
+        if self._channel == "lexical":
+            return self.search_lexical(query, top_k, allowed_doc_ids=allowed_doc_ids)
+        return self.search_dense(query, top_k, allowed_doc_ids=allowed_doc_ids)
+
+    def search_lexical(
         self, query: str, top_k: int, allowed_doc_ids: Optional[Set[str]] = None
     ) -> List[ScoredDoc]:
+        return self._search_channel(query, top_k, allowed_doc_ids, channel="lexical")
+
+    def search_dense(
+        self, query: str, top_k: int, allowed_doc_ids: Optional[Set[str]] = None
+    ) -> List[ScoredDoc]:
+        return self._search_channel(query, top_k, allowed_doc_ids, channel="dense")
+
+    def _search_channel(
+        self,
+        query: str,
+        top_k: int,
+        allowed_doc_ids: Optional[Set[str]],
+        *,
+        channel: str,
+    ) -> List[ScoredDoc]:
+        top_k = _validate_opensearch_top_k(top_k)
+        allowed = _normalize_allowed_doc_ids(allowed_doc_ids)
+        # An empty ACL is a complete deny.  Return before embedding, client
+        # construction, or any network call; this is intentionally distinct
+        # from a missing scope (None), which means unrestricted development
+        # mode.
+        if top_k == 0 or allowed == ():
+            return []
+
+        if channel == "lexical":
+            body = _build_lexical_search_body(query, top_k, allowed)
+        elif channel == "dense":
+            vector = _embed_query(self._embedder, query)
+            body = _build_dense_search_body(vector, top_k, allowed)
+        else:  # pragma: no cover - private callers only pass the closed set
+            raise RagInputError(f"unsupported OpenSearch channel: {channel}")
+
         client = self._connect()
-        vector = self._embedder.embed([query])[0]
-        fetch_size = top_k * _OPENSEARCH_ACL_OVERSAMPLE_FACTOR if allowed_doc_ids is not None else top_k
-        body = {
-            "size": max(0, fetch_size),
-            "query": {
-                "bool": {
-                    "should": [
-                        {"multi_match": {"query": query, "fields": ["title^2", "text"]}},
-                        {"knn": {"embedding": {"vector": vector, "k": max(0, fetch_size)}}},
-                    ]
-                }
-            },
-        }
-        response = client.search(index=self._index_name, body=body)
-        results: List[ScoredDoc] = []
-        for hit in response.get("hits", {}).get("hits", []):
-            source = hit["_source"]
-            payload = {
-                "doc_id": source.get("doc_id", ""),
-                "source_type": source.get("source_type", ""),
-                "document_type": source.get("document_type", ""),
-                "system": source.get("system", ""),
-                "component": source.get("component", ""),
-                "entity_ids": list(source.get("entity_ids", [])),
-                "trust_level": source.get("trust_level", ""),
-                "source_id": source.get("source_id", ""),
-                "updated_at": source.get("updated_at", ""),
-                "title": source.get("title", ""),
-                "text": source.get("text", ""),
-            }
+        try:
+            response = client.search(index=self._index_name, body=body)
+        except RagInputError:
+            raise
+        except Exception as exc:  # pragma: no cover - provider-specific integration path
+            raise RagInputError(f"OpenSearch {channel} search failed") from exc
+        return _parse_opensearch_response(response, top_k, allowed, channel=channel)
+
+    def close(self) -> None:
+        """Close a client created by this adapter, never an injected client."""
+
+        if self._client is None or not self._owns_client:
+            return
+        close = getattr(self._client, "close", None)
+        if close is None:
+            return
+        try:
+            close()
+        except Exception as exc:  # pragma: no cover - provider-specific integration path
+            raise RagInputError("OpenSearch client close failed") from exc
+
+
+class OpenSearchLexicalIndex(OpenSearchBackend):
+    """Explicit BM25/Nori OpenSearch channel for ``RetrievalPipeline``."""
+
+    def __init__(
+        self,
+        hosts: Sequence[str],
+        index_name: str,
+        embedder: EmbeddingFunction,
+        documents: Sequence[IndexDocument] = (),
+        embedding_dimension: Optional[int] = None,
+        *,
+        client: Any = None,
+    ) -> None:
+        super().__init__(
+            hosts,
+            index_name,
+            embedder,
+            documents,
+            embedding_dimension,
+            channel="lexical",
+            client=client,
+        )
+
+
+class OpenSearchVectorIndex(OpenSearchBackend):
+    """Explicit dense k-NN OpenSearch channel for ``RetrievalPipeline``."""
+
+    def __init__(
+        self,
+        hosts: Sequence[str],
+        index_name: str,
+        embedder: EmbeddingFunction,
+        documents: Sequence[IndexDocument] = (),
+        embedding_dimension: Optional[int] = None,
+        *,
+        client: Any = None,
+    ) -> None:
+        super().__init__(
+            hosts,
+            index_name,
+            embedder,
+            documents,
+            embedding_dimension,
+            channel="dense",
+            client=client,
+        )
+
+
+# Dense is the terminology used by the pipeline and vector is the historical
+# class name used by callers; expose both without introducing a second adapter.
+OpenSearchDenseIndex = OpenSearchVectorIndex
+
+
+def _validate_opensearch_top_k(top_k: int) -> int:
+    if type(top_k) is not int:
+        raise RagInputError(f"OpenSearch top_k must be an integer, got {type(top_k).__name__}")
+    if top_k < 0:
+        raise RagInputError("OpenSearch top_k must be non-negative")
+    if top_k > _OPENSEARCH_MAX_TOP_K:
+        raise RagInputError(f"OpenSearch top_k must be <= {_OPENSEARCH_MAX_TOP_K}")
+    return top_k
+
+
+def _normalize_allowed_doc_ids(allowed_doc_ids: Optional[Iterable[str]]) -> Optional[Tuple[str, ...]]:
+    if allowed_doc_ids is None:
+        return None
+    if isinstance(allowed_doc_ids, (str, bytes)):
+        raise RagInputError("allowed_doc_ids must be an iterable of document ID strings")
+    try:
+        values = list(allowed_doc_ids)
+    except (TypeError, ValueError) as exc:
+        raise RagInputError("allowed_doc_ids must be an iterable of document ID strings") from exc
+    if len(values) > _OPENSEARCH_MAX_ALLOWED_DOC_IDS:
+        raise RagInputError("allowed_doc_ids is too large")
+    if any(type(value) is not str or not value for value in values):
+        raise RagInputError("allowed_doc_ids entries must be non-empty strings")
+    return tuple(sorted(set(values)))
+
+
+def _allowed_filter(allowed_doc_ids: Optional[Tuple[str, ...]]) -> Optional[Dict[str, Any]]:
+    if allowed_doc_ids is None:
+        return None
+    return {"terms": {"doc_id": list(allowed_doc_ids)}}
+
+
+def _build_lexical_search_body(
+    query: str, top_k: int, allowed_doc_ids: Optional[Tuple[str, ...]]
+) -> Dict[str, Any]:
+    bool_query: Dict[str, Any] = {
+        "must": [{"multi_match": {"query": query, "fields": ["title^2", "text"]}}]
+    }
+    filter_clause = _allowed_filter(allowed_doc_ids)
+    if filter_clause is not None:
+        bool_query["filter"] = [filter_clause]
+    return {"size": top_k, "query": {"bool": bool_query}}
+
+
+def _build_dense_search_body(
+    vector: Sequence[float], top_k: int, allowed_doc_ids: Optional[Tuple[str, ...]]
+) -> Dict[str, Any]:
+    knn: Dict[str, Any] = {"vector": list(vector), "k": top_k}
+    filter_clause = _allowed_filter(allowed_doc_ids)
+    if filter_clause is not None:
+        # Efficient filtered k-NN is supported by Lucene HNSW (the mapping
+        # below) and keeps the ACL inside the vector search itself.
+        knn["filter"] = filter_clause
+    return {"size": top_k, "query": {"knn": {"embedding": knn}}}
+
+
+def _embed_query(embedder: EmbeddingFunction, query: str) -> List[float]:
+    try:
+        vectors = embedder.embed([query])
+    except Exception as exc:
+        raise RagInputError("OpenSearch dense query embedding failed") from exc
+    if not isinstance(vectors, list) or len(vectors) != 1:
+        raise RagInputError("OpenSearch dense query embedding response was malformed")
+    vector = vectors[0]
+    if not isinstance(vector, (list, tuple)) or not vector:
+        raise RagInputError("OpenSearch dense query embedding vector was malformed")
+    if any(isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)) for value in vector):
+        raise RagInputError("OpenSearch dense query embedding vector was malformed")
+    return [float(value) for value in vector]
+
+
+def _parse_opensearch_response(
+    response: Any,
+    top_k: int,
+    allowed_doc_ids: Optional[Tuple[str, ...]],
+    *,
+    channel: str,
+) -> List[ScoredDoc]:
+    if not isinstance(response, Mapping):
+        raise RagInputError(f"OpenSearch {channel} response must be an object")
+
+    timed_out = response.get("timed_out", False)
+    if type(timed_out) is not bool:
+        raise RagInputError(f"OpenSearch {channel} response timed_out flag was malformed")
+    if timed_out:
+        raise RagInputError(f"OpenSearch {channel} search timed out")
+
+    shards = response.get("_shards")
+    if shards is not None:
+        if not isinstance(shards, Mapping):
+            raise RagInputError(f"OpenSearch {channel} response shards metadata was malformed")
+        failed = shards.get("failed", 0)
+        if type(failed) is not int or failed < 0:
+            raise RagInputError(f"OpenSearch {channel} response shard failure count was malformed")
+        if failed:
+            raise RagInputError(f"OpenSearch {channel} search had failed shards")
+
+    hits = response.get("hits")
+    if not isinstance(hits, Mapping):
+        raise RagInputError(f"OpenSearch {channel} response hits was malformed")
+    raw_hits = hits.get("hits")
+    if not isinstance(raw_hits, list):
+        raise RagInputError(f"OpenSearch {channel} response hit list was malformed")
+    if len(raw_hits) > _OPENSEARCH_MAX_RESPONSE_HITS:
+        raise RagInputError(f"OpenSearch {channel} response contained too many hits")
+
+    results: List[ScoredDoc] = []
+    seen_doc_ids: Set[str] = set()
+    for hit in raw_hits:
+        if not isinstance(hit, Mapping):
+            raise RagInputError(f"OpenSearch {channel} response hit was malformed")
+        source = hit.get("_source")
+        if not isinstance(source, Mapping):
+            raise RagInputError(f"OpenSearch {channel} response hit source was malformed")
+        missing = _OPENSEARCH_SOURCE_FIELDS.difference(source)
+        if missing:
+            raise RagInputError(f"OpenSearch {channel} response hit source was missing fields")
+        score = hit.get("_score")
+        if isinstance(score, bool) or not isinstance(score, Real) or not math.isfinite(float(score)):
+            raise RagInputError(f"OpenSearch {channel} response hit score was malformed")
+        payload = {name: source[name] for name in _OPENSEARCH_SOURCE_FIELDS}
+        try:
             doc = parse_index_document(payload)
-            if allowed_doc_ids is not None and doc.doc_id not in allowed_doc_ids:
-                continue
-            results.append(ScoredDoc(doc_id=doc.doc_id, score=float(hit["_score"]), doc=doc, reasons=("opensearch",)))
-            if len(results) >= top_k:
-                break
-        return results
+        except RagInputError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive parser shield
+            raise RagInputError(f"OpenSearch {channel} response document was malformed") from exc
+        if doc.doc_id in seen_doc_ids:
+            raise RagInputError(f"OpenSearch {channel} response contained duplicate document IDs")
+        seen_doc_ids.add(doc.doc_id)
+        if allowed_doc_ids is not None and doc.doc_id not in allowed_doc_ids:
+            # This is not a post-filter: a server that violates the requested
+            # filter is rejected instead of silently leaking or re-ranking the
+            # unauthorized hit.
+            raise RagInputError(f"OpenSearch {channel} response violated the document ACL")
+        results.append(
+            ScoredDoc(
+                doc_id=doc.doc_id,
+                score=float(score),
+                doc=doc,
+                reasons=(f"opensearch:{channel}",),
+            )
+        )
+    # Every hit was validated above (a server sending more than ``size``
+    # hits is a protocol deviation, but the extra hits are still ACL-checked
+    # rather than trusted); only now truncate to the requested top_k.
+    return results[:top_k]
 
 
 # --------------------------------------------------------------------------
@@ -551,6 +898,7 @@ class RetrievalResult:
 class RetrievalConfig:
     top_k_lexical: int = 50
     top_k_vector: int = 50
+    top_k_registry: int = 30
     fuse_top_n: int = 30
     final_top_k: int = 5
     boosts: BoostConfig = field(default_factory=BoostConfig)
@@ -599,6 +947,34 @@ class RetrievalPipeline:
         # built over the same document set (the lexical index is treated as
         # the source of truth for that set).
         self.documents: Tuple[IndexDocument, ...] = self._lexical.documents
+        self._validate_corpus_consistency(vector.documents)
+
+    def _validate_corpus_consistency(self, vector_documents: Sequence[IndexDocument]) -> None:
+        """``allowed_doc_ids`` is computed once from ``self.documents`` (the
+        lexical corpus) and then applied to the vector search purely by
+        ``doc_id`` membership. If the vector index carries a different
+        ``IndexDocument`` under the same ``doc_id`` -- e.g. a different
+        ``component``/``text`` that the ACL would have hidden had it been
+        checked directly -- id-only filtering lets that divergent content
+        through under an id the lexical corpus already cleared. Fail closed
+        at construction time instead of silently trusting the two corpora to
+        agree."""
+
+        lexical_by_id = {doc.doc_id: doc for doc in self.documents}
+        for doc in vector_documents:
+            lexical_doc = lexical_by_id.get(doc.doc_id)
+            if lexical_doc is None:
+                raise RagInputError(
+                    f"vector index doc_id {doc.doc_id!r} is not present in the lexical corpus; "
+                    "lexical and vector indexes must be built over the same document set"
+                )
+            if lexical_doc != doc:
+                raise RagInputError(
+                    f"vector index document {doc.doc_id!r} does not match the lexical corpus "
+                    "document with the same doc_id; ACL filtering computed from the lexical "
+                    "corpus would not apply correctly to divergent content served by the "
+                    "vector index"
+                )
 
     def _apply_boosts(self, query: RetrievalQuery, scored_docs: Sequence[ScoredDoc]) -> List[ScoredDoc]:
         boosts = self._config.boosts
@@ -628,10 +1004,29 @@ class RetrievalPipeline:
             result.append(ScoredDoc(doc_id=scored.doc_id, score=score, doc=doc, reasons=tuple(reasons)))
         return result
 
-    def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
-        expansion = None
-        if self._registry is not None and query.entities:
-            expansion = self._registry.expand(query.entities)
+    def _effective_config(self, top_k: Optional[int]) -> RetrievalConfig:
+        """``top_k`` (when given) is a positive-int override that raises every
+        candidate-stage limit -- lexical/vector/registry top-k, RRF fuse
+        width, and the final serving cutoff -- to at least ``top_k``. It never
+        lowers a limit already configured higher. The serving default
+        (``final_top_k=5``) is unaffected when ``top_k`` is omitted."""
+
+        if top_k is None:
+            return self._config
+        if type(top_k) is not int or isinstance(top_k, bool) or top_k <= 0:
+            raise RagInputError(f"top_k must be a positive integer, got {top_k!r}")
+        base = self._config
+        return RetrievalConfig(
+            top_k_lexical=max(base.top_k_lexical, top_k),
+            top_k_vector=max(base.top_k_vector, top_k),
+            top_k_registry=max(base.top_k_registry, top_k),
+            fuse_top_n=max(base.fuse_top_n, top_k),
+            final_top_k=max(base.final_top_k, top_k),
+            boosts=base.boosts,
+        )
+
+    def retrieve(self, query: RetrievalQuery, *, top_k: Optional[int] = None) -> RetrievalResult:
+        config = self._effective_config(top_k)
 
         visible_docs, filtered_count = apply_acl(self.documents, self._acl)
         if query.document_types:
@@ -640,14 +1035,37 @@ class RetrievalPipeline:
         else:
             allowed_doc_ids = {doc.doc_id for doc in visible_docs}
 
-        lexical_results = self._lexical.search(query.text, self._config.top_k_lexical, allowed_doc_ids=allowed_doc_ids)
-        vector_results = self._vector.search(query.text, self._config.top_k_vector, allowed_doc_ids=allowed_doc_ids)
+        expansion = None
+        if self._registry is not None and query.entities:
+            # ``AllowAllAcl`` is the explicit unrestricted-development marker
+            # (see registry.py's ``_normalize_entity_scope``), so it alone
+            # gets ``None`` (no scope check). Any other ACL is a restricted
+            # caller and must fail closed: the trusted entity allowlist is
+            # exactly the ``entity_ids`` attached to documents the ACL already
+            # cleared, never the client-supplied query entities themselves,
+            # so a restricted caller can never traverse a relation bridge
+            # through an entity no visible document names.
+            if isinstance(self._acl, AllowAllAcl):
+                allowed_entity_ids = None
+            else:
+                allowed_entity_ids = frozenset(
+                    entity_id for doc in visible_docs for entity_id in doc.entity_ids
+                )
+            expansion = self._registry.expand(query.entities, allowed_entity_ids=allowed_entity_ids)
 
-        fused = rrf_fuse([lexical_results, vector_results], top_n=self._config.fuse_top_n)
+        lexical_results = self._lexical.search(query.text, config.top_k_lexical, allowed_doc_ids=allowed_doc_ids)
+        vector_results = self._vector.search(query.text, config.top_k_vector, allowed_doc_ids=allowed_doc_ids)
+        registry_results: List[ScoredDoc] = []
+        if expansion is not None and expansion.entity_ids:
+            registry_results = _registry_linked_results(
+                self.documents, allowed_doc_ids, expansion.entity_ids, config.top_k_registry
+            )
+
+        fused = rrf_fuse([lexical_results, vector_results, registry_results], top_n=config.fuse_top_n)
         boosted = self._apply_boosts(query, fused)
         boosted.sort(key=lambda item: (-item.score, item.doc_id))
 
-        reranked = self._reranker.rerank(query.text, boosted, self._config.final_top_k)
+        reranked = self._reranker.rerank(query.text, boosted, config.final_top_k)
         final_docs, _ = apply_acl([sd.doc for sd in reranked], self._acl)
         final_ids = {doc.doc_id for doc in final_docs}
         final = tuple(sd for sd in reranked if sd.doc_id in final_ids)

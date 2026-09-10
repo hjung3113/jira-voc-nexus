@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
+from types import SimpleNamespace
 from pathlib import Path
 
 from rag.contracts import IndexDocument
@@ -93,6 +95,9 @@ class MetricTests(unittest.TestCase):
         relevant = ["a", "b"]
         self.assertAlmostEqual(ndcg_at_k(results, relevant, k=10), 1.0)
 
+    def test_duplicate_hits_cannot_inflate_ndcg(self):
+        self.assertEqual(ndcg_at_k(["a", "a", "a"], ["a"]), 1.0)
+
     def test_ndcg_at_k_no_relevant_is_zero(self):
         self.assertEqual(ndcg_at_k(["a", "b"], [], k=10), 0.0)
 
@@ -151,6 +156,15 @@ class LoadGoldenSetTests(unittest.TestCase):
         entries = load_golden_set(str(ROOT / "fixtures" / "rag" / "golden_set.json"))
         self.assertGreaterEqual(len(entries), 8)
 
+    def test_empty_set_and_invalid_relevance_ids_rejected(self):
+        payloads = [[]] + [
+            [{"query": VALID_QUERY_PAYLOAD, "relevant_doc_ids": ids}]
+            for ids in (["a", "a"], [""], ["   "])
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload), self.assertRaises(RagInputError):
+                load_golden_set(_write_json(self, payload))
+
 
 def _tiny_corpus():
     def doc(doc_id, title, text, document_type="jira_problem"):
@@ -201,13 +215,72 @@ class RunEvaluationTests(unittest.TestCase):
         report = run_evaluation([variants["bm25-only"]], golden)
         self.assertEqual(report["bm25-only"]["recall@5"], 1.0)
 
-    def test_empty_golden_set_yields_zero_metrics_without_error(self):
+    def test_empty_golden_set_rejected(self):
         documents = _tiny_corpus()
         variants = default_local_variants(documents, "")
-        report = run_evaluation(variants, [])
-        for metrics in report.values():
-            self.assertEqual(metrics["recall@5"], 0.0)
-            self.assertEqual(metrics["mrr@10"], 0.0)
+        with self.assertRaises(RagInputError):
+            run_evaluation(variants, [])
+
+    def test_evaluation_retrieves_beyond_serving_top_five(self):
+        documents = [replace(_tiny_corpus()[0], doc_id=f"{i:02}:problem", source_id=str(i),
+                             title="same", text="same") for i in range(12)]
+        golden = [GoldenEntry(RetrievalQuery(text="same"), ("08:problem",))]
+        variant = default_local_variants(documents, "")[0]
+        self.assertEqual(len(variant.build().retrieve(golden[0].query).final), 5)
+        metrics = run_evaluation([variant], golden)[variant.name]
+        self.assertEqual(metrics["recall@5"], 0.0)
+        self.assertEqual(metrics["recall@10"], 1.0)
+        self.assertAlmostEqual(metrics["mrr@10"], 1 / 9)
+        metrics = run_evaluation([variant], [GoldenEntry(golden[0].query, ("11:problem",))], ks=(12,))[variant.name]
+        self.assertEqual(metrics["recall@12"], 1.0)
+        self.assertEqual(metrics["mrr@10"], 0.0)
+
+    def test_unknown_or_filtered_relevance_ids_fail_before_retrieval(self):
+        docs = _tiny_corpus()
+        calls = []
+        pipeline = SimpleNamespace(documents=docs, retrieve=lambda *a, **kw: calls.append(a))
+        variants = [PipelineVariant("fake", lambda: pipeline)]
+        for query, ids in ((RetrievalQuery(text="q"), ("missing",)),
+                           (RetrievalQuery(text="q", document_types=("domain_knowledge",)), ("A:problem",)),
+                           (RetrievalQuery(text=" "), ("A:problem",)),
+                           (RetrievalQuery(text="q"), ("A:problem", "A:problem"))):
+            with self.subTest(ids=ids, query=query), self.assertRaises(RagInputError):
+                run_evaluation(variants, [GoldenEntry(query, ids)])
+        self.assertEqual(calls, [])
+
+    def test_invalid_cutoffs_and_duplicate_variant_names_rejected(self):
+        variant = default_local_variants(_tiny_corpus(), "")[0]
+        golden = [GoldenEntry(RetrievalQuery(text="q"), ("A:problem",))]
+        for ks in ((), (0,), (-1,), (True,), (5, 5)):
+            with self.subTest(ks=ks), self.assertRaises(RagInputError):
+                run_evaluation([variant], golden, ks=ks)
+        for variants in ([], [variant, variant]):
+            with self.assertRaises(RagInputError):
+                run_evaluation(variants, golden)
+
+    def test_duplicate_or_unknown_pipeline_results_fail_closed(self):
+        docs = _tiny_corpus()
+        golden = [GoldenEntry(RetrievalQuery(text="q"), ("A:problem",))]
+        for ids in (("A:problem", "A:problem"), ("unknown",)):
+            final = [SimpleNamespace(doc_id=doc_id) for doc_id in ids]
+            pipeline = SimpleNamespace(documents=docs, retrieve=lambda *a, **kw: SimpleNamespace(final=final))
+            with self.subTest(ids=ids), self.assertRaises(RagInputError):
+                run_evaluation([PipelineVariant("bad", lambda: pipeline)], golden)
+
+    def test_variant_cleanup_runs_after_a_fail_closed_result(self):
+        docs = _tiny_corpus()
+        golden = [GoldenEntry(RetrievalQuery(text="q"), ("A:problem",))]
+        final = [SimpleNamespace(doc_id="A:problem"), SimpleNamespace(doc_id="A:problem")]
+        pipeline = SimpleNamespace(
+            documents=docs,
+            retrieve=lambda *a, **kw: SimpleNamespace(final=final),
+        )
+        closed = []
+        variant = PipelineVariant("bad", lambda: pipeline, cleanup=lambda _: closed.append(True))
+
+        with self.assertRaises(RagInputError):
+            run_evaluation([variant], golden)
+        self.assertEqual(closed, [True])
 
     def test_fixture_hybrid_rerank_meets_recall_floor(self):
         # Locks the >= 0.5 recall@5 floor to the committed fixture content

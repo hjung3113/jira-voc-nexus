@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .contracts import IndexDocument
+from .contracts import IndexDocument, TRUST_LEVELS
+from .errors import RagInputError
 from .registry import RegistryExpansion
 from .retrieval import RetrievalQuery, RetrievalResult
 
@@ -30,6 +31,10 @@ class ContextSection:
 @dataclass(frozen=True)
 class ContextConfig:
     max_chars: int = 8_000
+
+    def __post_init__(self) -> None:
+        if type(self.max_chars) is not int or self.max_chars < 0:
+            raise RagInputError("max_chars must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -59,10 +64,10 @@ def _collect_jira_sections(
         if doc.document_type == "jira_problem":
             add(doc, "problem")
     for doc in final_docs:
-        if doc.document_type == "jira_resolution":
+        if doc.document_type == "jira_resolution" and doc.source_id in per_issue:
             add(doc, "resolution")
     for doc in resolution_docs:
-        if doc.document_type == "jira_resolution":
+        if doc.document_type == "jira_resolution" and doc.source_id in per_issue:
             add(doc, "resolution")
 
     sections = []
@@ -96,14 +101,16 @@ class ContextBuilder:
         resolution_docs: Sequence[IndexDocument] = (),
         registry_expansion: Optional[RegistryExpansion] = None,
     ) -> BuiltContext:
-        final_docs = [sd.doc for sd in result.final]
+        # Repeated hits must not consume the evidence budget twice.
+        final_docs = list({sd.doc_id: sd.doc for sd in result.final}.values())
+        final_docs.sort(key=lambda doc: TRUST_LEVELS.index(doc.trust_level))
         sections: List[ContextSection] = []
 
         for doc in final_docs:
-            if doc.document_type in _DOMAIN_DOCUMENT_TYPES:
+            if doc.document_type in _DOMAIN_DOCUMENT_TYPES and doc.trust_level == "canonical":
                 sections.append(ContextSection(heading="Canonical Domain", lines=(doc.title, doc.text), source=doc.doc_id))
         for doc in final_docs:
-            if doc.document_type in _SYSTEM_DOCUMENT_TYPES:
+            if doc.document_type in _SYSTEM_DOCUMENT_TYPES and doc.trust_level != "supporting":
                 sections.append(ContextSection(heading="System", lines=(doc.title, doc.text), source=doc.doc_id))
 
         expansion = registry_expansion if registry_expansion is not None else result.expansion
@@ -113,6 +120,11 @@ class ContextBuilder:
                 sections.append(ContextSection(heading="Relationship Evidence", lines=path_lines, source="registry"))
 
         sections.extend(_collect_jira_sections(final_docs, resolution_docs))
+
+        for doc in final_docs:
+            if ((doc.document_type in _DOMAIN_DOCUMENT_TYPES and doc.trust_level != "canonical")
+                    or (doc.document_type in _SYSTEM_DOCUMENT_TYPES and doc.trust_level == "supporting")):
+                sections.append(ContextSection(heading="Supporting Knowledge", lines=(doc.title, doc.text), source=doc.doc_id))
 
         return self._apply_budget(sections)
 
@@ -136,6 +148,8 @@ class ContextBuilder:
         text = "\n".join(blocks)
         if omitted:
             omitted_line = "Omitted: " + ", ".join(omitted)
-            text = f"{text}\n{omitted_line}" if text else omitted_line
+            addition = f"\n{omitted_line}" if text else omitted_line
+            if len(text) + len(addition) <= self._config.max_chars:
+                text += addition
 
         return BuiltContext(text=text, sections=tuple(included), omitted_sections=omitted)

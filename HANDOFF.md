@@ -73,6 +73,33 @@
   golden corpus, metric comparison, ACL leakage = 0) per
   [docs/RAG_DESIGN.md](docs/RAG_DESIGN.md) and
   [docs/TOOLING_DECISION.md](docs/TOOLING_DECISION.md).
+- Review follow-up in the current shared WIP: evaluation now validates empty/
+  duplicate golden IDs, empty sets, duplicate variant names/cutoffs,
+  unknown/type-excluded IDs, and duplicate returned IDs, while requesting the
+  actual evaluation depth from the retrieval seam. Context assembly keeps a
+  hard character budget including omission notices, selected problem-to-
+  resolution linkage, deduplication, and canonical-before-supporting order.
+  Index staging treats embedded JSON as authoritative and the registry sidecar
+  as disposable; query/eval close only owned temporary registry connections,
+  never shared indexes.
+- The retrieval adapter's `retrieve(query, *, top_k=None)` seam has since
+  landed (raises lexical/vector/registry/fuse/final candidate limits to at
+  least `top_k`, serving default unchanged at 5), along with a bounded
+  ACL-visible registry-linked RRF channel and a fail-closed trusted-entity
+  scope for relation expansion. The coordinator's final battery (after applying the
+  last Grok delta review: Lucene HNSW method on the knn mapping, walk-all-
+  hits ACL validation before top_k truncation, search-body/leak/competing-
+  edge tests, operations-guide signal reframe, index/cross-ref fixes)
+  reports **177/177 passing** (3 PG registry tests skip without
+  `NEXUS_RAG_PG_TEST_DATASOURCE`). Orchestration history for this
+  reinforcement pass: two design reviews plus three Codex implementation
+  workers were dispatched by a root Astra orchestrator, which then hit the
+  account 5h quota mid-run; the coordinator took over, and Claude Sonnet
+  successors finished the three work packages before the final Grok delta
+  review. The earlier 136/136 result above is superseded historical
+  baseline evidence and must not be reused as the final count for this WIP.
+  The synthetic golden set is now 11 queries (recall@5 = 1.000 across all
+  five variants on the coordinator's run).
 - Replay caveat: an event first processed before format v1 keeps its
   originally stored comment/result when replayed (replay identity is
   `event_id` + payload fingerprint and does not include the renderer version).

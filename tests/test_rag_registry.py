@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -127,6 +128,72 @@ class RegistryExpandTests(unittest.TestCase):
         expansion_capped = self.registry.expand(["ParserJob"], max_hops=99)
         expansion_three = self.registry.expand(["ParserJob"], max_hops=3)
         self.assertEqual(expansion_capped, expansion_three)
+
+    def test_expand_rejects_non_string_entity_name(self):
+        # A non-string entry (e.g. from an unvalidated caller) must not be
+        # forwarded to the sqlite query as-is; it must fail closed with a
+        # RagInputError instead of an opaque driver-level error or a silent
+        # no-op.
+        with self.assertRaises(RagInputError):
+            self.registry.expand([123], max_hops=1)
+
+    def test_expand_rejects_non_int_max_hops(self):
+        with self.assertRaises(RagInputError):
+            self.registry.expand(["ParserJob"], max_hops="2")
+
+    def test_expand_rejects_bool_max_hops(self):
+        # bool is an int subclass in Python; accepting it silently would let
+        # True/False pass as 1/0 hops without the caller intending it.
+        with self.assertRaises(RagInputError):
+            self.registry.expand(["ParserJob"], max_hops=True)
+
+    def test_expand_prefers_forward_edge_over_reverse_edge_to_same_node(self):
+        # Seed S reaches T via a forward edge (S CALLS T); seed U reaches the
+        # same T only in reverse (T CALLS U, traversed backwards from U).
+        # The stored path for T must be the forward one, and the reverse
+        # traversal of T from U must not shadow it.
+        entities = [
+            {"id": "s", "type": "component", "name": "S", "system": "SYS", "description": ""},
+            {"id": "u", "type": "component", "name": "U", "system": "SYS", "description": ""},
+            {"id": "t", "type": "component", "name": "T", "system": "SYS", "description": ""},
+        ]
+        relations = [
+            {"source_id": "s", "relation_type": "CALLS", "target_id": "t"},
+            {"source_id": "t", "relation_type": "CALLS", "target_id": "u"},
+        ]
+        registry = SqliteKnowledgeRegistry.from_payload(_new_db_path(self), entities, relations)
+        expansion = registry.expand(["S", "U"], max_hops=1)
+        t_paths = [path for path in expansion.paths if path[-1] == "T"]
+        self.assertEqual(t_paths, [("S", "CALLS", "T")])
+
+
+class RegistryLifecycleTests(unittest.TestCase):
+    def test_close_closes_the_underlying_connection(self):
+        registry = SqliteKnowledgeRegistry(_new_db_path(self))
+        registry.close()
+        with self.assertRaises(sqlite3.ProgrammingError):
+            registry.upsert_entity(
+                KnowledgeEntity(id="a", type="component", name="A", system="S", description="")
+            )
+
+
+class RegistryReverseDirectionTests(unittest.TestCase):
+    def test_expand_from_target_shows_explicit_reverse_direction(self):
+        # SP_INSERT_RAW WRITES -> RAW_DATA is declared source->target. Expanding
+        # from the target must not silently claim RAW_DATA WRITES SP_INSERT_RAW
+        # (an inverted fact); it must mark the hop as reverse.
+        entities = [
+            {"id": "sp", "type": "stored_procedure", "name": "SP_INSERT_RAW", "system": "S", "description": ""},
+            {"id": "tbl", "type": "table", "name": "RAW_DATA", "system": "S", "description": ""},
+        ]
+        relations = [{"source_id": "sp", "relation_type": "WRITES", "target_id": "tbl"}]
+        registry = SqliteKnowledgeRegistry.from_payload(_new_db_path(self), entities, relations)
+
+        forward = registry.expand(["SP_INSERT_RAW"], max_hops=1)
+        self.assertEqual(forward.paths, (("SP_INSERT_RAW",), ("SP_INSERT_RAW", "WRITES", "RAW_DATA")))
+
+        reverse = registry.expand(["RAW_DATA"], max_hops=1)
+        self.assertEqual(reverse.paths, (("RAW_DATA",), ("RAW_DATA", "<-WRITES-", "SP_INSERT_RAW")))
 
 
 class RegistryCycleSafetyTests(unittest.TestCase):
