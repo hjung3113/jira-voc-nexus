@@ -106,6 +106,52 @@
   A fresh state file or a new event ID renders the new format. A future
   re-render policy is an open integration question, not a local bug.
 
+## Gap analysis: auto-recommendation, auto-labeling, dual-audience action items (2026-09-10, later session)
+
+- User asked for a gap analysis of auto issue-recommendation, auto-labeling, and
+  recommended-action generation (user-side + developer-side), explicitly requiring Orca
+  CLI orchestration end-to-end (no other spawn mechanism), OMP/Grok as the review agents,
+  and OMP restricted to the direct Z.AI path (`zai/glm-5.3-flash`), never OpenRouter.
+- Ran 4 parallel read-only research tasks under Run `run_2cf16fa35e46` (OMP,
+  `zai/glm-5.3-flash`, thinking `high`) over disjoint areas — core runtime (`nexus/`), RAG
+  evidence layer (`rag/`), integration/action-routing contract, and product
+  scope/taxonomy — then synthesized all four into **[docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md)**
+  (35 ranked gaps + open design questions), then had Grok 4.6 (`high`, native `grok` CLI)
+  adjudicate it. Grok's review is appended to that file: it confirmed the core
+  dual-audience/two-label/fail-closed-schema diagnosis, downgraded 4 items (Jira-adapter
+  absence, publish-path absence, ungated RAG top-5, unmet RAG adoption gate) from High to
+  Medium as expected-for-a-pre-production-scaffold, **upgraded "dual-audience output is
+  absent from stated scope" to High** as the actual decision gate for the others, corrected
+  3 overstated claims, and found 2 new Medium gaps (`nexus/` never calls into `rag/`; the
+  OpenCode prompt carries no audience/label/duplication policy).
+- Raw per-area research reports are at `.local/gap-research/{A,B,C,D}-*.md` (local-only,
+  not for external distribution, git-ignored).
+- Filed the Grok-recalibrated High-severity gaps plus the 2 new findings as GitHub issues
+  **#2–#11** on `hjung3113/jira-voc-nexus`, cross-linked so #9 (dual-audience scope
+  decision) is marked as gating #2, #5, #8. Committed as `539b9dd` and pushed to
+  `origin/main`.
+- Orchestration lesson learned (repeat pattern from a prior session's Grok stall, now also
+  hit with OMP): `orca orchestration dispatch --task <id> --to <handle> --inject` pastes
+  the full task+preamble text into `omp`, which raises its own paste-confirmation dialog
+  ("Attach as a wrapped block" / "Attach as local file" / "Paste inline") for large pastes.
+  Orca's dispatch-liveness monitor does not wait past ~30s for that dialog and marks the
+  dispatch `failed` (`agent_prompt_stalled`, capability revoked) even though the terminal
+  is still live and will run the task correctly once an Enter is sent to accept the default
+  option. All 4 GLM workers this session hit this and had their `worker_done`/heartbeats
+  rejected after-the-fact (`dispatch_capability_invalid`); the coordinator verified
+  completion by reading the on-disk report files directly and closed each task with a
+  manual `task-update --status completed` plus a note, rather than trusting the lifecycle
+  channel. **Fix for next time**: after `dispatch --inject` into an `omp` terminal, send an
+  immediate confirming `terminal send --text "" --enter` within a few seconds (before the
+  ~30s stall timeout) rather than inspecting the dialog first — this worked cleanly for the
+  Grok dispatch in the same session (`grok --model grok-4.6 --reasoning-effort high`, no
+  paste dialog, no capability revocation, full `worker_done` lifecycle). Also:
+  `worker-start --model`/`--effort` is not supported for the `omp` or `grok` agent adapters
+  ("Agent X does not support launch-time model selection") — the low-level
+  `terminal create --command "<agent> --model ... --thinking/--reasoning-effort ..."` +
+  `dispatch --inject` path is required for per-invocation model/effort control on these two
+  agents.
+
 ## Verification (2026-09-10, by coordinator)
 
 - `python3 -m unittest discover -s tests -v`: **20/20 passing** — includes the
@@ -137,8 +183,18 @@
 
 ## Next steps
 
+- **Start here next session**: [GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9)
+  needs a human product decision — is a user-ready response/workaround text in MVP scope
+  at all, or does the MVP stop at internal triage pointers? This gates #2 (audience-split
+  content), #5 (input contract fields), and #8 (routing), and shapes #3/#4/#6/#7. Answer
+  this before starting schema/contract work on any of the other gap issues.
+- Once #9 is answered, pick one of `docs/GAP_ANALYSIS.md`'s "Suggested next-slice
+  candidates" (audience-split output contract, taxonomy dimensions, or a nexus↔rag wiring
+  slice per issue #10) as the next `voc-workflow`/`voc-slice` task — do not start more than
+  one in parallel given the shared `nexus/proposals.py` and `docs/TEMPLATES.md` surface.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
-  contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met. The write
-  lifecycle will consume the TEMPLATES.md formats and marker contract.
+  contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
+  issues #9/#10 above but not blocked on them). The write lifecycle will consume the
+  TEMPLATES.md formats and marker contract.
 - Coordinator commits/pushes this state; no runnable Jira adapter and no new
   required dependency are in this commit.
