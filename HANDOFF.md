@@ -1,4 +1,35 @@
-# Jira VOC Nexus handoff — 2026-09-10
+# Jira VOC Nexus handoff — 2026-09-11
+
+## Gap issue #11: OpenCode prompt policy content (2026-09-11)
+
+- Read the prior handoff's "Pick one at a time" file-ownership caution and analyzed every
+  open gap issue (#2-#8, #10, #11) by file surface before parallelizing anything: #2/#5/#8
+  share `nexus/proposals.py` + `docs/TEMPLATES.md` (already flagged do-not-parallelize);
+  #3/#10 share `nexus/service.py`/`retrieval.py`, and #10 additionally conflicts with
+  `docs/RAG_DESIGN.md`'s explicit non-goal ("replacing the current deterministic fixture
+  runtime before the POC/evaluation gate passes") since wiring `nexus/` to consume the
+  unadopted `rag/` toolkit is itself a pre-gate adoption step; #4/#6 both touch
+  `nexus/proposals.py`/`rag/contracts.py` and depend on #3/#5's taxonomy decisions. Only
+  **#7** and **#11** (this entry) were fully file-disjoint from each other and from every
+  gated/shared-surface issue, and neither needed a design decision first. Confirmed this
+  scope with the user before dispatching. See the companion "Gap issue #7" entry below for
+  the other slice run in parallel.
+- Ran as an Orca-orchestrated worker per `voc-slice`/`orchestration`: Run
+  `run_d1e8445e5d4e`, Task `task_8a0eb5264ab9`, `worker-start --agent codex --model
+  gpt-5.6-luna --effort max` in the current worktree, alongside the #7 worker in the same
+  worktree (disjoint files, no conflict). Completed cleanly with `worker_done`, released.
+- Change (`nexus/opencode.py`, `tests/test_nexus.py`): `OpenCodeEngine._request_message`'s
+  `instructions` string now states the real allowed-label set (`needs-triage`,
+  `possible-duplicate`) with one sentence per label on when to use it, the audience-split
+  routing rule (customer-facing impact/status/guidance in `customer_reply`, internal
+  diagnosis/remediation in `engineering_action`), and the duplication-judgment policy (only
+  `possible-duplicate` when evidence describes the same underlying problem, not a merely
+  related one; default to `needs-triage` otherwise). `output_contract`'s JSON shape and the
+  existing null-not-invented/per-field-grounding sentences are unchanged.
+- Coordinator verification: `python3 -m unittest discover -s tests -v` — **182/182 passing**
+  (3 PG-registry tests skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff
+  --check` clean; fixture CLI smoke run exit 0.
+- Not yet merged — opened as its own PR for Astra review before merge.
 
 ## Current state
 

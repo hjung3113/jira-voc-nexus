@@ -247,6 +247,20 @@ class NexusTests(unittest.TestCase):
         )
         self.assertTrue(set(request_payload["output_contract"]["labels"]).issubset(ALLOWED_LABELS))
         self.assertEqual(request_payload["output_contract"]["labels"], ["possible-duplicate"])
+        instructions = request_payload["instructions"]
+        self.assertIn("The only allowed labels are needs-triage and possible-duplicate.", instructions)
+        self.assertIn(
+            "Put customer-facing impact, status, or guidance in customer_reply, and put internal technical diagnosis or remediation in engineering_action.",
+            instructions,
+        )
+        self.assertIn(
+            "Choose possible-duplicate only when the supplied evidence documents describe the same underlying problem or symptom, not merely a topically related one.",
+            instructions,
+        )
+        self.assertIn(
+            "Choose needs-triage by default when the evidence does not clearly establish that same issue, including when evidence is present but the match is unclear.",
+            instructions,
+        )
         self.assertEqual(kwargs["cwd"].startswith("/"), True)
         self.assertIn('"event"', kwargs["input"])
         self.assertEqual(result["labels"], ["possible-duplicate"])
