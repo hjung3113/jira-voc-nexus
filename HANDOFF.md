@@ -269,11 +269,30 @@
 - Not yet committed/pushed — pending user confirmation before commit, per this project's
   authorization scope discipline.
 
+## Astra medium review of the audience-split commit (2026-09-11)
+
+- Reviewed only commit `6602a09`'s message + diff (per user request), via Orca
+  orchestration `worker-start --agent codex --model gpt-6-astra --effort medium`
+  (Run `run_8443944f7694`, Task `task_037b58ba9674`) — no other files read, no tests run.
+  Both requested/effective launch model and effort were accepted as given.
+- Two low findings, both checked against the actual repo state before acting:
+  1. **Real, fixed** (`ec3615f`): `tests/test_nexus.py`'s `test_no_evidence_skips_selected_engine`
+     had silently lost its `self.assertEqual(engine.calls, 0)` check during the v2
+     rewrite — the test still passed but no longer verified the documented
+     no-provider-call-without-evidence invariant (`nexus/service.py`'s "hard no-provider
+     path" comment). Restored; 181/181 still passing.
+  2. **No action needed**: the commit message's "fixed a dropped model-config regression"
+     line has no visible counterpart in the diff — correct as observed, because the
+     coordinator fixed that regression *before* staging in the prior session, so the
+     final diff against the pre-worker state shows no net change there. Documented here
+     for anyone re-reading the commit message cold.
+- Worker/task/run cleaned up (`worker-release`, `task-update --status completed`).
+
 ## Next steps
 
-- **Start here next session**: the audience-split v2 contract is **implemented and
-  verified** (181/181 tests, fixture CLI confirmed). If the coordinator's uncommitted
-  changes from this session are still present, commit/push them first (see git status).
+- **Start here next session**: the audience-split v2 contract is **implemented, verified,
+  and reviewed** (181/181 tests, fixture CLI confirmed, Astra medium diff review applied).
+  All work through `ec3615f` is committed and pushed to `origin/main` — nothing pending.
 - Issues #2, #5, #8 now have a real code contract to build against (`customer_reply`/
   `engineering_action` in `nexus/proposals.py`, `nexus/service.py`'s public result, and
   the v2 templates in `docs/TEMPLATES.md`). Pick one at a time — do not parallelize
