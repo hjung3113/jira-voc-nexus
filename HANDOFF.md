@@ -214,25 +214,81 @@
   instruction. Issues #2, #5, #8 (which this design unblocks) are still open and
   untouched.
 
+## Audience-split output contract implementation (2026-09-10, later session)
+
+- Implemented the v2 audience-split contract designed in the previous session, per
+  `voc-slice` (single-worker orchestration, no separate reviewer — a validation/
+  rendering contract change, not ACL/replay).
+- Orchestration record: Run `run_a2c8562d393b`, Task `task_548678205e72`, dispatched via
+  low-level `terminal create` + `dispatch --task ... --to ... --inject` to an OMP
+  terminal running `zai/glm-5.3` at `--thinking=high` (per this project's "complex
+  implementation" routing rule; note the CLI flag is `--thinking=<level>`, not
+  `--reasoning-effort`). Hit the same OMP paste-confirmation-dialog stall documented in
+  the previous gap-analysis session's orchestration lesson (`dispatch --inject` pastes a
+  large task spec, OMP raises its own confirm dialog, Orca's ~30s liveness monitor marks
+  the dispatch `agent_prompt_stalled` and revokes the capability before the dialog is
+  answered). Sent an immediate confirming empty Enter (`terminal send --text "" --enter`)
+  after the stall was observed; the worker then ran the task to completion and sent
+  `worker_done`, which Orca rejected (`dispatch_capability_invalid` — capability already
+  revoked). The coordinator verified the actual work directly (diff review + full test
+  run + fixture CLI) rather than trusting the lifecycle channel, then closed the task
+  with a manual `task-update --status completed` carrying a note, and `worker-release`
+  (reported `retained`/`no_owned_resource` since `dispatch --inject` never created a
+  supervised worker row — consistent with the orchestration guide).
+- Files changed by the worker: `nexus/proposals.py` (`validate_proposal` new
+  `{customer_reply, engineering_action, labels}` schema with independent per-field
+  lexical grounding via a new `_audience_field` helper; `fixture_proposal` produces both
+  fields; `render_comment`/`render_issue` render the v2 template with `|v2|` markers),
+  `nexus/opencode.py` (`_request_message`'s `output_contract`/`instructions` describe the
+  new shape and the null-not-invented / per-field-grounding rules), `nexus/service.py`
+  (public result's `recommendations` key replaced by `customer_reply` +
+  `engineering_action`), `tests/test_nexus.py` (existing format-contract tests updated to
+  v2 shape/markers/frozen-key-set; new tests for both-null, customer-only, engineering-
+  only, disjoint-evidence union, and both directions of cross-field-citation rejection),
+  `docs/TEMPLATES.md` (v2 real-example blocks synced to actual fixture renderer output).
+- **Coordinator review finding and fix**: the worker's `nexus/opencode.py` diff
+  accidentally dropped `"model": model` from the `agent.voc-triage` block in
+  `_runtime_config` — unrelated to the assigned scope and uncaught by any existing test.
+  Fixed directly by the coordinator (one-line restore) before verification; re-ran the
+  full suite after the fix.
+- Coordinator also updated `docs/ARCHITECTURE.md` (marked the v2 contract as
+  implemented, not a design record; "Implementation follow-up" section rewritten as
+  "Implementation record" of what actually landed; "Public result and operational
+  status" updated to describe v2 as current, v1 as historical/replay-only) and
+  `docs/TEMPLATES.md`/`docs/INTEGRATION.md` (v1 sections relabeled historical/superseded,
+  v2 sections relabeled implemented/current, since this was a hard cutover with no v1
+  code path remaining).
+- Verification (coordinator, after the fix): `python3 -m unittest discover -s tests` —
+  **181/181 passing** (3 PG-registry tests skip, pre-existing and unrelated); `git diff
+  --check` clean; fixture CLI (`python3 -m nexus --event fixtures/event.json --corpus
+  fixtures/corpus.json --state <fresh state>`) smoke run succeeded, output matches
+  `docs/TEMPLATES.md`'s v2 real-example blocks exactly (`voc-nexus-comment|v2|event-001`
+  / `voc-nexus-issue|v2|event-001` markers, `customer_reply`/`engineering_action` in the
+  public result).
+- Fixture-only verification; no real OpenCode/Jira provider was exercised this session.
+- Not yet committed/pushed — pending user confirmation before commit, per this project's
+  authorization scope discipline.
+
 ## Next steps
 
-- **Start here next session**: issue #9 is decided and closed (dual-audience output is
-  in MVP scope). The audience-split output contract is **designed** (see above,
-  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md` v2 sections) but
-  **not implemented**. The next `voc-slice` task is that implementation: update
-  `nexus/proposals.py` (`validate_proposal`, `fixture_proposal`, `render_comment`,
-  `render_issue`), `nexus/opencode.py`'s `_request_message` (`output_contract` +
-  `instructions`), and `nexus/service.py`'s public result key (`recommendations` →
-  `customer_reply`/`engineering_action`), plus the five regression-test cases listed
-  under "Implementation follow-up" in `docs/ARCHITECTURE.md`. Do not start #2, #5, or #8
-  in parallel — they consume this same contract once it exists in code, not before.
-- After that implementation slice lands, pick one of `docs/GAP_ANALYSIS.md`'s remaining
-  "Suggested next-slice candidates" (taxonomy dimensions, or a nexus↔rag wiring slice per
-  issue #10) as the following task — still one at a time given the shared
-  `nexus/proposals.py` and `docs/TEMPLATES.md` surface.
+- **Start here next session**: the audience-split v2 contract is **implemented and
+  verified** (181/181 tests, fixture CLI confirmed). If the coordinator's uncommitted
+  changes from this session are still present, commit/push them first (see git status).
+- Issues #2, #5, #8 now have a real code contract to build against (`customer_reply`/
+  `engineering_action` in `nexus/proposals.py`, `nexus/service.py`'s public result, and
+  the v2 templates in `docs/TEMPLATES.md`). Pick one at a time — do not parallelize
+  given the shared `nexus/proposals.py` and `docs/TEMPLATES.md` surface. Issue #5 in
+  particular has an open question recorded in `docs/TEMPLATES.md`'s label-taxonomy
+  section (asymmetric grounding — is a third label needed when only one audience field
+  is grounded?) that a taxonomy slice should resolve.
+- After that, pick one of `docs/GAP_ANALYSIS.md`'s remaining "Suggested next-slice
+  candidates" (taxonomy dimensions, or a nexus↔rag wiring slice per issue #10).
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
-  issue #10 above but not blocked on it). The write lifecycle will consume the
-  TEMPLATES.md formats and marker contract (v1 today, v2 once implemented).
-- Coordinator commits/pushes this state; no runnable Jira adapter and no new
-  required dependency are in this commit.
+  issue #10 above but not blocked on it). The write lifecycle will consume the v2
+  TEMPLATES.md formats and marker contract; a real write adapter must still handle
+  pre-cutover v1-marker'd events on replay (see docs/INTEGRATION.md's marker note).
+- Orchestration lesson reaffirmed: OMP's flag for reasoning depth is `--thinking=<level>`
+  (off/minimal/low/medium/high/xhigh/max/auto), not `--reasoning-effort` — the latter
+  errors out immediately (`unknown flag`). Use `omp --help` to confirm flags before
+  `terminal create --command` if unsure.

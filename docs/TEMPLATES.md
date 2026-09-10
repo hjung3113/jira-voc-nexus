@@ -1,38 +1,38 @@
-# Comment/Issue Templates (v1 implemented, v2 design target)
+# Comment/Issue Templates (v2 implemented, v1 historical)
 
 This document defines the exact output contract for `nexus/proposals.py`'s
 `render_comment` and `render_issue`, the input contract those renderers
 consume (`nexus/models.py`'s `parse_event`/`parse_corpus`), and the label
 taxonomy. It is the reference other agents and the company-side producer
-should match; **for v1, the renderers are the source of truth** if this
-document and the code ever disagree — file a fix here, not a code change to
-match stale prose. **v2 is a recorded design target only** (per
-[GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9) and
-[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s audience-split proposal contract);
-until the paired `voc-slice` implementation task lands, v1 is what actually
-runs and this document's v1 sections remain authoritative for current
-behavior.
+should match; **the renderers are the source of truth** if this document and
+the code ever disagree — file a fix here, not a code change to match stale
+prose.
+
+**v2 is now implemented** (per
+[GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9)'s
+dual-audience decision and
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s audience-split proposal contract).
+This was a hard cutover — there is no v1 code path in `nexus/proposals.py`
+today. §1 and §2's v1 subsections stay in this document as a historical
+record of pre-cutover behavior only, because a v1-marker'd comment/issue
+already stored before this cutover keeps rendering from its stored result on
+replay (replay identity is `event_id` + payload fingerprint, not renderer
+version — see `HANDOFF.md`'s replay caveat).
 
 ## 0. Format versions at a glance
 
-- **v1** (implemented) — one undifferentiated `recommendations` list.
-  Superseded by v2 as the design target for new events (see
-  [ARCHITECTURE.md's audience-split proposal contract](ARCHITECTURE.md)),
-  but **not deleted from this document**: v1 remains the actual renderer
-  behavior until the paired `voc-slice` implementation task lands, and any
-  event already processed under v1 keeps its stored v1 comment/issue on
-  replay regardless of code version (see "Replay caveat" in `HANDOFF.md` —
-  replay identity is `event_id` + payload fingerprint, not renderer
-  version).
-- **v2** (design only — not yet implemented) — splits output into a
+- **v1** (historical, superseded) — one undifferentiated `recommendations`
+  list. No longer produced by any renderer; kept here only so an old stored
+  v1 comment/issue (from before this cutover) can still be read against its
+  documented shape.
+- **v2** (implemented, current behavior) — splits output into a
   `customer_reply` section and an `engineering_action` section, each
-  independently evidence-grounded. §1 and §2 below are updated in place to
-  show v1 as currently implemented and v2 as the recorded design target;
-  the marker line names the version so old and new markers never collide.
+  independently evidence-grounded. The marker line names the version so old
+  v1 markers and new v2 markers never collide.
 
-## 1. Comment format v1 (implemented) / v2 (design target)
+## 1. Comment format v1 (historical) / v2 (implemented)
 
-### v1 (current renderer behavior)
+### v1 (historical — superseded, no longer produced)
 
 `render_comment(proposal, evidence, event_id)` returns a single string with
 this structure, in this exact order:
@@ -105,7 +105,7 @@ newline, or carriage return (`ProposalValidationError`, fail-closed) so the
 marker always stays a single unambiguous line; producers should emit
 `[A-Za-z0-9._-]`-style ids.
 
-### v2 (design target — not yet implemented)
+### v2 (implemented — current renderer behavior)
 
 `render_comment(proposal, evidence, event_id)` returns a single string with
 this structure, in this exact order:
@@ -147,7 +147,7 @@ voc-nexus-comment|v2|<event_id>
 - `event_id` marker-safety rejection (`|`, newline, carriage return) is
   unchanged.
 
-### Real example (v2, design target)
+### Real example (v2, current)
 
 Same inputs as the v1 example above, once evidence supports both audiences:
 
@@ -155,10 +155,10 @@ Same inputs as the v1 example above, once evidence supports both audiences:
 VOC triage recommendations (dry-run):
 
 Customer reply:
-Your payment may show as pending for up to 10 minutes after a card timeout; it will resolve automatically and you will not be charged twice.
+Fixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.
 
 Engineering action:
-Review the resolved guidance for PAY-42 concerning card timeout retries.
+Fixture demo only: review the resolved guidance for PAY-42 concerning card.
 
 Evidence:
 - PAY-42: https://jira.example.local/browse/PAY-42
@@ -186,9 +186,9 @@ Labels: needs-triage
 voc-nexus-comment|v2|event-001
 ```
 
-## 2. Issue format v1 (implemented) / v2 (design target)
+## 2. Issue format v1 (historical) / v2 (implemented)
 
-### v1 (current renderer behavior)
+### v1 (historical — superseded, no longer produced)
 
 `render_issue(event, proposal, evidence)` returns a dict with exactly three
 keys: `summary`, `description`, `marker`.
@@ -245,7 +245,7 @@ voc-nexus-issue|v1|<event_id>
 }
 ```
 
-### v2 (design target — not yet implemented)
+### v2 (implemented — current renderer behavior)
 
 `render_issue(event, proposal, evidence)` returns the same three keys —
 `summary`, `description`, `marker` — unchanged. `summary` is unchanged. Only
@@ -278,12 +278,12 @@ voc-nexus-issue|v2|<event_id>
 - `marker` is `voc-nexus-issue|v2|<event_id>` — the exact same string as the
   description's last line, same as v1.
 
-### Real example (v2, design target)
+### Real example (v2, current)
 
 ```json
 {
   "summary": "[VOC] Checkout card payment timeout",
-  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nYour payment may show as pending for up to 10 minutes after a card timeout; it will resolve automatically and you will not be charged twice.\n\nEngineering action:\nReview the resolved guidance for PAY-42 concerning card timeout retries.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\n\nvoc-nexus-issue|v2|event-001",
+  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\n\nvoc-nexus-issue|v2|event-001",
   "marker": "voc-nexus-issue|v2|event-001"
 }
 ```

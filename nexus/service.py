@@ -37,7 +37,7 @@ class NexusService:
             # A missing retrieval result is a hard no-provider path.  In
             # particular, selecting OpenCode cannot cause an ungrounded call.
             if not evidence:
-                raw_proposal = {"recommendations": [], "labels": ["needs-triage"]}
+                raw_proposal = {"customer_reply": None, "engineering_action": None, "labels": ["needs-triage"]}
             else:
                 try:
                     raw_proposal = self.engine.propose(event, evidence)
@@ -49,15 +49,16 @@ class NexusService:
             engine_name = str(getattr(self.engine, "name", "unknown"))
             result = {
                 "comment": render_comment(proposal, evidence, event.event_id),
+                "customer_reply": proposal["customer_reply"],
                 "demo_only": bool(getattr(self.engine, "demo_only", False)),
                 "dry_run": True,
                 "engine": engine_name,
+                "engineering_action": proposal["engineering_action"],
                 "event_id": event.event_id,
                 "issue": render_issue(event, proposal, evidence),
                 "issue_key": event.issue_key,
                 "labels": proposal["labels"],
                 "published": False,
-                "recommendations": proposal["recommendations"],
                 "state": "prepared",
             }
             return result

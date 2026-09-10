@@ -97,14 +97,14 @@ check — not proof that a recommendation is factually accurate.
 
 ## Proposal output contract (v2, audience-split)
 
-**Design decision recorded 2026-09-10** (this section), following the
-product decision on
+**Implemented 2026-09-10** (design recorded then implemented same day),
+following the product decision on
 [GitHub issue #9](https://github.com/hjung3113/jira-voc-nexus/issues/9):
 dual-audience output — a user-ready reply and a separate internal
-engineering pointer — is in MVP scope. This supersedes the single
-undifferentiated `recommendations` list. **This is a design record; the
-engine/validator/renderer code change is a separate `voc-slice`
-implementation task — see "Implementation follow-up" below.**
+engineering pointer — is in MVP scope. This is the current, running
+contract: it replaced the single undifferentiated `recommendations` list
+as a hard cutover (no v1 code path remains in `nexus/proposals.py`). See
+"Implementation record" below for exactly what changed and where.
 
 The object an engine returns, and the validator must pass, allows exactly
 these three fields:
@@ -160,31 +160,34 @@ needs multiple distinct evidence-grounded points, widening one field back to
 a bounded list is a compatible follow-up (additive to this record, not a
 breaking change to the other field).
 
-### Implementation follow-up (not done in this pass)
+### Implementation record
 
-The following code changes implement this record and are left for the next
-`voc-slice` task:
+The following code changes implement this contract (landed 2026-09-10):
 
-- `nexus/proposals.py`: `validate_proposal` (new schema), `fixture_proposal`
-  (produce both fields instead of one list, still fixture/demo-only),
-  `render_comment`/`render_issue` (see the v2 templates in
-  [docs/TEMPLATES.md](TEMPLATES.md)).
-- `nexus/opencode.py`'s `_request_message`: the `output_contract` payload
-  and `instructions` string must be updated to (a) describe the new
-  `customer_reply`/`engineering_action` shape, (b) instruct the model to
-  return `null` rather than invent content when the evidence does not
-  support a grounded statement for that audience, and (c) instruct the
-  model to ground each audience field only in the sources it cites for that
-  field — this also closes the "OpenCode prompt carries no audience/label
-  policy" gap recorded in [docs/GAP_ANALYSIS.md](GAP_ANALYSIS.md). Exact
-  prompt wording is an implementation detail for that task, not fixed here.
-- `nexus/service.py`'s public result: replace the `recommendations` key
-  with `customer_reply` and `engineering_action` (see "Public result and
+- `nexus/proposals.py`: `validate_proposal` (new schema, independent
+  per-field grounding via `_audience_field`), `fixture_proposal` (produces
+  both fields, still fixture/demo-only), `render_comment`/`render_issue`
+  (v2 templates, see [docs/TEMPLATES.md](TEMPLATES.md)).
+- `nexus/opencode.py`'s `_request_message`: `output_contract` and
+  `instructions` describe the `customer_reply`/`engineering_action` shape,
+  instruct the model to return `null` rather than invent content when
+  ungrounded, and instruct it to ground each audience field only in the
+  sources it cites for that field — this also closes the "OpenCode prompt
+  carries no audience/label policy" gap recorded in
+  [docs/GAP_ANALYSIS.md](GAP_ANALYSIS.md).
+- `nexus/service.py`'s public result: `recommendations` replaced by
+  `customer_reply` and `engineering_action` (see "Public result and
   operational status" below).
-- Regression tests for: both-null (needs-triage) path, customer-only
-  grounded, engineering-only grounded, both grounded with disjoint evidence
-  sets, and a proposal where one field cites a source that only grounds the
-  other field (must fail validation).
+- Regression tests in `tests/test_nexus.py`: both-null (needs-triage) path,
+  customer-only grounded, engineering-only grounded, both grounded with
+  disjoint evidence sets, and both directions of cross-field citation
+  (a field citing a source that only grounds the other field) rejected by
+  `validate_proposal`.
+- Verification: `python3 -m unittest discover -s tests` — 181/181 passing
+  (3 PG-registry tests skip, unrelated to this change); `git diff --check`
+  clean; fixture CLI smoke run against `fixtures/event.json` +
+  `fixtures/corpus.json` succeeded and its exact output is reflected in
+  [docs/TEMPLATES.md](TEMPLATES.md)'s v2 real-example blocks.
 
 ## OpenCode boundary
 
@@ -221,27 +224,24 @@ rerank is never split into a separate model call or process.
 
 ## Public result and operational status
 
-The current (implemented, v1) public CLI result provides `dry_run`,
-`published`, `engine`, `demo_only`, `event_id`, `issue_key`, `comment`,
-`issue`, `labels`, `recommendations`, `state`.
+The current public CLI result provides `comment`, `customer_reply`,
+`demo_only`, `dry_run`, `engine`, `engineering_action`, `event_id`, `issue`,
+`issue_key`, `labels`, `published`, `state`. `customer_reply` and
+`engineering_action` replaced the earlier `recommendations` key as of the
+2026-09-10 audience-split cutover — a breaking change to the CLI's public
+JSON shape, acceptable because `published` is always `false` and no real
+Jira consumer exists yet.
 
-**Design record for the audience-split follow-up slice:** once the
-proposal output contract above lands, `recommendations` is replaced by
-`customer_reply` and `engineering_action` (each the same nullable object
-shape as the proposal contract) in this public result. This is a breaking
-change to the CLI's public JSON shape; it is acceptable now because
-`published` is always `false` and no real Jira consumer exists yet. Record
-the change in `HANDOFF.md` when it lands so anyone scripting against the
-current CLI output notices.
-
-The `comment` key is a string rendered with comment format v1 today, v2
-after the follow-up slice (see [docs/TEMPLATES.md](TEMPLATES.md)); the
-`issue` key is an issue format v1/v2 object with exactly the `summary`,
-`description`, `marker` keys. Both formats end with a final marker line —
-`voc-nexus-comment|v1|<event_id>` (v2: `voc-nexus-comment|v2|<event_id>`) or
-`voc-nexus-issue|v1|<event_id>` (v2: `voc-nexus-issue|v2|<event_id>`) — and
-the same `event_id` always produces the same marker for a given format
-version. `published` is always false, and `dry_run` is always true. The
+The `comment` key is a string rendered with comment format v2 (see
+[docs/TEMPLATES.md](TEMPLATES.md)); the `issue` key is an issue format v2
+object with exactly the `summary`, `description`, `marker` keys. Both
+formats end with a final marker line — `voc-nexus-comment|v2|<event_id>` or
+`voc-nexus-issue|v2|<event_id>` — and the same `event_id` always produces
+the same marker. A comment/issue produced before this cutover under format
+v1 (`voc-nexus-comment|v1|<event_id>` / `voc-nexus-issue|v1|<event_id>`)
+keeps its stored v1 result on replay — replay identity is `event_id` +
+payload fingerprint, not renderer version; see `HANDOFF.md`'s replay
+caveat. `published` is always false, and `dry_run` is always true. The
 current local-only `state` value is `prepared`, which does not mean a
 successful Jira publish. A real Jira comment/label adapter must have its own
 separate lifecycle and reconciliation contract.
