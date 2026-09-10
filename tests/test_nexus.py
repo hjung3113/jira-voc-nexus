@@ -254,11 +254,11 @@ class NexusTests(unittest.TestCase):
             instructions,
         )
         self.assertIn(
-            "Choose possible-duplicate only when the supplied evidence documents describe the same underlying problem or symptom, not merely a topically related one.",
+            "Choose possible-duplicate only when at least one evidence document describes the same underlying problem as this event, not merely a similar symptom or a topically related one.",
             instructions,
         )
         self.assertIn(
-            "Choose needs-triage by default when the evidence does not clearly establish that same issue, including when evidence is present but the match is unclear.",
+            "Choose needs-triage by default whenever no evidence document clearly establishes that same underlying problem, including when evidence is present but the match is unclear.",
             instructions,
         )
         self.assertEqual(kwargs["cwd"].startswith("/"), True)

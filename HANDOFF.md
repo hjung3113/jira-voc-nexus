@@ -12,8 +12,9 @@
   `nexus/proposals.py`/`rag/contracts.py` and depend on #3/#5's taxonomy decisions. Only
   **#7** and **#11** (this entry) were fully file-disjoint from each other and from every
   gated/shared-surface issue, and neither needed a design decision first. Confirmed this
-  scope with the user before dispatching. See the companion "Gap issue #7" entry below for
-  the other slice run in parallel.
+  scope with the user before dispatching. A companion "Gap issue #7" slice was run in
+  parallel in the same session (branch `codex/gap-issue-7-index-document-project-field`,
+  PR #13); its own HANDOFF entry lives on that branch, not this one.
 - Ran as an Orca-orchestrated worker per `voc-slice`/`orchestration`: Run
   `run_d1e8445e5d4e`, Task `task_8a0eb5264ab9`, `worker-start --agent codex --model
   gpt-5.6-luna --effort max` in the current worktree, alongside the #7 worker in the same
@@ -23,13 +24,23 @@
   `possible-duplicate`) with one sentence per label on when to use it, the audience-split
   routing rule (customer-facing impact/status/guidance in `customer_reply`, internal
   diagnosis/remediation in `engineering_action`), and the duplication-judgment policy (only
-  `possible-duplicate` when evidence describes the same underlying problem, not a merely
-  related one; default to `needs-triage` otherwise). `output_contract`'s JSON shape and the
-  existing null-not-invented/per-field-grounding sentences are unchanged.
-- Coordinator verification: `python3 -m unittest discover -s tests -v` — **182/182 passing**
-  (3 PG-registry tests skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff
-  --check` clean; fixture CLI smoke run exit 0.
-- Not yet merged — opened as its own PR for Astra review before merge.
+  `possible-duplicate` when at least one evidence document describes the same underlying
+  problem as the event, not a merely similar symptom or topically related one; default to
+  `needs-triage` otherwise). `output_contract`'s JSON shape and the existing
+  null-not-invented/per-field-grounding sentences are unchanged.
+- Coordinator verification (on this branch alone, before the companion #7 branch merges):
+  `python3 -m unittest discover -s tests -v` — **181/181 passing** (3 PG-registry tests
+  skip, expected without `NEXUS_RAG_PG_TEST_DATASOURCE`); `git diff --check` clean; fixture
+  CLI smoke run exit 0.
+- Opened as PR #12. Astra medium review (Orca orchestration Run `run_025664e31ba8`, Task
+  `task_42a1ea06f372`) found 1 medium + 1 low: (medium) the duplicate-judgment wording
+  compared evidence documents to each other rather than anchoring to the current event and
+  allowed a bare shared "symptom" to qualify, which the coordinator fixed by rewording to
+  "at least one evidence document describes the same underlying problem as this event, not
+  merely a similar symptom" (`nexus/opencode.py`, `tests/test_nexus.py`); (low) this file
+  had a dangling "see companion entry below" reference and an inaccurate 182/182 test count
+  copied from the combined pre-split verification, both fixed above. Re-verified after the
+  fix: 181/181 passing, `git diff --check` clean.
 
 ## Current state
 

@@ -128,11 +128,11 @@ class OpenCodeEngine:
                 "or guidance in customer_reply, and put internal technical diagnosis "
                 "or remediation in engineering_action. The only allowed labels are "
                 "needs-triage and possible-duplicate. Choose possible-duplicate only "
-                "when the supplied evidence documents describe the same underlying "
-                "problem or symptom, not merely a topically related one. Choose "
-                "needs-triage by default when the evidence does not clearly establish "
-                "that same issue, including when evidence is present but the match is "
-                "unclear."
+                "when at least one evidence document describes the same underlying "
+                "problem as this event, not merely a similar symptom or a topically "
+                "related one. Choose needs-triage by default whenever no evidence "
+                "document clearly establishes that same underlying problem, including "
+                "when evidence is present but the match is unclear."
             ),
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
