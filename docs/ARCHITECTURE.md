@@ -379,6 +379,72 @@ safeguard, per the existing proposal-validation boundary).
 - [docs/TEMPLATES.md](TEMPLATES.md) §5 documents both implemented dimensions;
   its current v2 examples reflect the fixture CLI's computed label output.
 
+## Severity/impact/priority scoring (design, GitHub issue #3)
+
+[GitHub issue #3](https://github.com/hjung3113/jira-voc-nexus/issues/3)
+originally named one gap that is actually two separate concerns once
+separated by what each score orders:
+
+1. **Evidence-ranking score** — `nexus/retrieval.py`'s `retrieve()` computes
+   a lexical-overlap score per candidate document purely to rank and cut
+   evidence to the top `MAX_EVIDENCE` documents for one event. This is
+   already scoring, already used, and intentionally internal: it ranks
+   *documents against one event's text*, not events against each other, and
+   exposing it in the public result would misrepresent an unweighted lexical
+   heuristic as a calibrated confidence number. No change: it stays an
+   implementation detail of `retrieve()`, matching the existing
+   `resolved: true` "hint, not proof" treatment recorded above.
+2. **Business severity/impact for triage prioritization** — the issue's
+   actual "impact" complaint ("a triage queue cannot order work, route by
+   SLA, or decide escalation") — is a *different* score: a per-event
+   judgment about how urgent the underlying problem is.
+
+### Decision: business severity is the already-implemented `severity:*` label, not a new numeric field
+
+Concern 2 is the same "producer-supplied vs. in-runtime vs. human-edited"
+question `docs/GAP_ANALYSIS.md` recorded for issue #3, and the label
+taxonomy section above already answered it for severity: **in-runtime
+inferred**, not producer-supplied (`docs/ARCHITECTURE.md`'s "severity/
+component/root-cause values are in-runtime inferred" decision, explicitly
+noted there as resolving the label-taxonomy half only, with #3 left open).
+This section closes that gap: the four-value `severity:low|medium|high|
+critical` label implemented for issue #4 **is** the business severity signal
+issue #3 asked for — evidence-signalled, omittable, LLM-judged, surfaced in
+both the public result's `labels` key and the rendered `Labels:` line. No
+second, separately-computed numeric priority field is added; one severity
+signal per event, not two that could disagree.
+
+This keeps the `Event` input contract exactly as strict as today
+(`event_id/issue_key/project/summary/description/labels`, unknown fields
+rejected) — no breaking change, no dependency on issue #5's versioning
+decision, consistent with how #4 was resolved.
+
+### Explicitly deferred, not designed here: ordering, SLA routing, escalation
+
+`severity:*` being present on one proposal does not give this scaffold a way
+to *use* it across events — there is no queue, scheduler, or batch runner
+anywhere in `nexus/`; the CLI processes exactly one file-supplied event per
+invocation (`docs/PROJECT_OVERVIEW.md`'s scaffold boundary). Ordering a
+triage queue, routing by SLA, or triggering automatic escalation all require
+a real queue/adapter that receives multiple events and a Jira priority-field
+mapping, neither of which this design adds — building a local queue or
+scheduler now would be pre-building infrastructure ahead of the real
+integration slice, which this project's rules forbid. `docs/GAP_ANALYSIS.md`
+already tracks the two related open questions this leaves genuinely
+unresolved (not this design's job to answer): "routing model" (static
+label→queue/component/assignee config vs. a data-driven ownership registry)
+and "escalation trigger semantics" (which label/evidence combination creates
+the `[VOC]` issue vs. a comment only, and what priority mapping applies).
+Recorded as future work in [docs/INTEGRATION.md](INTEGRATION.md) rather than
+implemented here.
+
+### Implementation
+
+None — this is a design-only resolution. No code changed: `severity:*`
+already exists (issue #4), and the evidence-ranking score already stays
+internal by design. The only follow-up is documentation (this section plus
+the [docs/INTEGRATION.md](INTEGRATION.md) future-work note).
+
 ## OpenCode boundary
 
 For each new event with evidence, the adapter runs exactly one OpenCode

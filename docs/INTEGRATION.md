@@ -46,7 +46,11 @@ an object with only `text` and `evidence_ids`: at most 2,000 characters of
 text, 1 to 5 unique evidence IDs. Evidence IDs must already be present in the
 ACL-filtered top-5 result, and each audience field is grounded independently
 — a source cited by one field never grounds the other. The label allowlist
-is only `needs-triage` and `possible-duplicate`. The validator checks JSON
+is `needs-triage`, `possible-duplicate`, and an omittable, at-most-one
+`severity:low|medium|high|critical` (LLM-judged from evidence signal, never
+invented — see [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s label taxonomy
+section); `audience-coverage:*` is a fourth label-line value but is computed
+in code, never accepted from the model. The validator checks JSON
 shape, bounds, duplicates, source membership, and conservative per-field
 lexical grounding.
 
@@ -58,6 +62,17 @@ but not yet implemented — it is never model output, only a deterministic
 function of the already-validated proposal, and a real adapter would still
 need its own assignee/component/queue mapping on top of it (not designed
 here).
+
+The `severity:*` label (see above) is the business-priority signal for
+[GitHub issue #3](https://github.com/hjung3113/jira-voc-nexus/issues/3), per
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Severity/impact/priority scoring"
+section. It is not yet wired to anything that orders, routes, or escalates
+work: there is no queue or scheduler in this scaffold (one event per CLI
+invocation), so triage-queue ordering, SLA routing, and automatic escalation
+all remain future work for a real Jira write adapter, along with the
+label→queue/component/assignee mapping and the escalation-trigger semantics
+(which label/evidence combination creates the `[VOC]` issue vs. a comment
+only) that `docs/GAP_ANALYSIS.md` records as still-open questions.
 
 When there is no evidence, no provider process is started, and a
 `needs-triage` proposal is produced instead. Exactly one OpenCode process

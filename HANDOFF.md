@@ -1,5 +1,44 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Severity/impact/priority scoring design for issue #3 (2026-09-12)
+
+- Read this handoff plus `docs/INDEX.md`; git state matched (clean, `main`, `cba1cd1`
+  latest). User picked issue #3 as the next slice from the "Next steps" list (#3, #5, #6,
+  #10, all design-gated). Ran `voc-workflow` (design only, no `nexus/*.py` touched).
+- Issue #3's title conflates two different scores: (1) `nexus/retrieval.py`'s internal
+  lexical-overlap score, which ranks evidence documents against one event and is
+  correctly discarded before the public result — no change needed; (2) the actual
+  "impact" complaint (a triage queue cannot order work / route by SLA / escalate without
+  severity), which is a per-event business-priority judgment. Separated these before
+  designing, since #4's severity work only ever addressed the second one.
+- **Decision, recorded in `docs/ARCHITECTURE.md`'s new "Severity/impact/priority scoring
+  (design, GitHub issue #3)" section**: the business-severity concern is already resolved
+  by issue #4's `severity:low|medium|high|critical` label (in-runtime inferred, LLM-
+  judged, omittable) — no second numeric priority field is added, so the event can't carry
+  two severity signals that could disagree. This closes the "severity source of truth"
+  open question `docs/GAP_ANALYSIS.md` recorded for #3, using the same in-runtime-not-
+  producer-supplied reasoning already applied to #4 (no breaking `Event` contract change,
+  no dependency on issue #5's versioning decision).
+- **Explicitly deferred, not designed here**: turning `severity:*` into actual queue
+  ordering, SLA routing, or automatic escalation. This scaffold has no queue or scheduler
+  — the CLI processes one file-supplied event per invocation — so there is nothing yet to
+  order or route across events. Building a local queue now would be pre-building
+  infrastructure ahead of the real integration slice, which this project's rules forbid.
+  `docs/GAP_ANALYSIS.md`'s "routing model" and "escalation trigger semantics" open
+  questions remain genuinely open for that future real-adapter slice.
+- `docs/INTEGRATION.md`: fixed an adjacent stale finding discovered while editing the
+  "Proposal/model contract" section — its label-allowlist description still said only
+  `needs-triage`/`possible-duplicate`, unaware of #4's `severity:*`/`audience-coverage:*`
+  additions. Corrected in the same edit, plus a new paragraph recording `severity:*` as
+  #3's priority signal and that ordering/routing/escalation remain future work.
+- No code changed — `nexus/*.py` untouched, `severity:*` already existed from #4 and the
+  retrieval score already stayed internal by design. Verification:
+  `python3 -m unittest discover -s tests -v` — **187/187 passing** (3 PG-registry tests
+  skip, expected, doc-only change); `git diff --check` clean.
+- Not yet committed. Issue #3 itself not yet commented on or closed — pending user
+  decision on whether to close it now (business-severity half resolved, like #2) or leave
+  it open tracking the deferred queue/SLA/escalation work in `docs/INTEGRATION.md`.
+
 ## Issue #4 implemented: label taxonomy dimensions (2026-09-11, later session)
 
 - Implemented the design recorded in the "Label taxonomy dimensions design for issue #4"
@@ -589,14 +628,17 @@
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
   #6, #10 all need a design decision first...~~
-- **Start here next session**: remaining open gap issues are #3 (severity/impact/priority
-  *scoring* used by retrieval/ranking — distinct from #4's now-implemented severity
-  *label*), #5 (input contract fields — needs a versioning decision, breaking v1
-  event/corpus schema), #6 (evidence-to-label linkage in `rag/` — blocks #4's deferred
-  `root-cause` dimension and any future `component` registry work), #10 (nexus↔rag wiring,
-  gated by the RAG adoption boundary in `docs/RAG_DESIGN.md`). All four still need a design
-  decision before coding; #5/#10 additionally need an explicit versioning/adoption decision,
-  not just a coding slice.
+- **Start here next session**: issue #3's design is recorded in `docs/ARCHITECTURE.md`/
+  `docs/INTEGRATION.md` (see the "Severity/impact/priority scoring" entry above) but not
+  committed, and the issue itself is not yet closed or commented on — resolve that first
+  (commit, then decide with the user whether to close #3 or leave it open tracking the
+  deferred queue/SLA/escalation work). Remaining open gap issues after that: #5 (input
+  contract fields — needs a versioning decision, breaking v1 event/corpus schema), #6
+  (evidence-to-label linkage in `rag/` — blocks #4's deferred `root-cause` dimension and any
+  future `component` registry work), #10 (nexus↔rag wiring, gated by the RAG adoption
+  boundary in `docs/RAG_DESIGN.md`). All three still need a design decision before coding;
+  #5/#10 additionally need an explicit versioning/adoption decision, not just a coding
+  slice.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2
