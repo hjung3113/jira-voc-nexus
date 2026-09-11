@@ -35,9 +35,10 @@
   retrieval score already stayed internal by design. Verification:
   `python3 -m unittest discover -s tests -v` — **187/187 passing** (3 PG-registry tests
   skip, expected, doc-only change); `git diff --check` clean.
-- Not yet committed. Issue #3 itself not yet commented on or closed — pending user
-  decision on whether to close it now (business-severity half resolved, like #2) or leave
-  it open tracking the deferred queue/SLA/escalation work in `docs/INTEGRATION.md`.
+- Committed as `a466e99` on `main` (not pushed). User confirmed closing the issue, same
+  pattern as #2: closed [GitHub issue
+  #3](https://github.com/hjung3113/jira-voc-nexus/issues/3) with a summary comment
+  (decision, what's resolved vs. still-deferred queue/SLA/escalation work).
 
 ## Issue #4 implemented: label taxonomy dimensions (2026-09-11, later session)
 
@@ -628,12 +629,9 @@
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
   #6, #10 all need a design decision first...~~
-- **Start here next session**: issue #3's design is recorded in `docs/ARCHITECTURE.md`/
-  `docs/INTEGRATION.md` (see the "Severity/impact/priority scoring" entry above) but not
-  committed, and the issue itself is not yet closed or commented on — resolve that first
-  (commit, then decide with the user whether to close #3 or leave it open tracking the
-  deferred queue/SLA/escalation work). Remaining open gap issues after that: #5 (input
-  contract fields — needs a versioning decision, breaking v1 event/corpus schema), #6
+- **Issue #3 is now resolved by design and closed** (see its entry above; commit
+  `a466e99`). **Start here next session**: remaining open gap issues are #5 (input contract
+  fields — needs a versioning decision, breaking v1 event/corpus schema), #6
   (evidence-to-label linkage in `rag/` — blocks #4's deferred `root-cause` dimension and any
   future `component` registry work), #10 (nexus↔rag wiring, gated by the RAG adoption
   boundary in `docs/RAG_DESIGN.md`). All three still need a design decision before coding;
