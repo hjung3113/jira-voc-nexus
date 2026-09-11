@@ -361,13 +361,11 @@ yes/no once there are two audience fields — evidence might ground
 asymmetric case needs a third label, a documented precedence rule for the
 existing two, or is left implicit (a human reading the rendered `null`
 section already sees which audience is ungrounded) is not settled by this
-document. **Correction (2026-09-11):** the actual open GitHub issue this
-paragraph should point to is unclear — issue #5 as filed is about the input
-event/corpus contract lacking component/severity/root-cause fields, not
-about the label taxonomy; this cross-reference predates that issue's current
-text and needs the coordinator/user to confirm the right tracking issue
-(possibly #4, "label taxonomy has no severity/component/root-cause/fix-type
-dimension") before it is relied on.
+document. Tracked under [GitHub issue #4](https://github.com/hjung3113/jira-voc-nexus/issues/4)
+("label taxonomy has no severity/component/root-cause/fix-type dimension") —
+confirmed correct on 2026-09-11 after a prior cross-reference here mistakenly
+pointed at issue #5, which is actually about the input event/corpus contract,
+not the label taxonomy.
 
 ## 6. Recipient routing (implemented)
 

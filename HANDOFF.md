@@ -1,5 +1,17 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Cross-reference correction in TEMPLATES.md (2026-09-11, later session)
+
+- Read this handoff's "Next steps"; the flagged stale cross-reference (asymmetric-audience-
+  grounding open question in `docs/TEMPLATES.md` §5 pointed at issue #5, which is actually
+  about the input event/corpus contract, not label taxonomy) needed confirming before any
+  further design work relied on it. User confirmed **#4** ("label taxonomy has no severity/
+  component/root-cause/fix-type dimension") is the correct target — it matches the actual
+  question content. Fixed the cross-reference directly (doc-only, one paragraph).
+- No gap issue selected yet for the next design slice — user deferred that choice.
+- Verification: `python3 -m unittest discover -s tests` — 184/184 passing (3 PG-registry
+  tests skip, expected); `git diff --check` clean. Not yet committed/pushed.
+
 ## Issue #8 implemented: recipient routing (2026-09-11, later session)
 
 - User asked to read this handoff, pull out parallelizable remaining work, and run it in
