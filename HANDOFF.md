@@ -1,5 +1,47 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Input-contract versioning (#5) and evidence-to-label linkage (#6) design (2026-09-12)
+
+- User asked to design #5, #6, and #10 together. Flagged before proceeding: #10 is
+  currently blocked by `docs/RAG_DESIGN.md`'s explicit non-goal ("no `rag/` adoption
+  before the POC/evaluation gate passes") — designing #10's actual wiring now would be
+  deciding to pre-empt that gate, a bigger call than a design session should make
+  unilaterally. User confirmed: **do #5+#6 now, exclude #10** (same conclusion the prior
+  "Gap issue #11" session reached independently). Ran `voc-workflow` (design only, no
+  `nexus/*.py`/`rag/*.py` touched).
+- **#5 decision, recorded in `docs/ARCHITECTURE.md`'s new "Input contract versioning"
+  section**: no `Event`/corpus contract change. #5's premise — that severity/component/
+  root-cause need a producer-supplied field, which would break v1 — no longer holds:
+  severity is already in-runtime inferred (#3/#4), root-cause is designed below as a
+  `rag/`-evidence-side addition (not an `Event` field), and component's blocker is a
+  bounded registry over evidence data, not something a producer needs to supply. Not a
+  blanket "never change the input contract" rule — a genuinely new future need would still
+  require its own versioning decision at that time, not one made speculatively now.
+- **#6 decision, recorded in `docs/ARCHITECTURE.md`'s new "Evidence-to-label linkage"
+  section**: split into two halves with different implementability. (a) Add
+  `IndexDocument.labels: Tuple[str, ...]` in `rag/contracts.py`, sourced from
+  `issue.metadata.get("labels", [])` in `issue_to_documents` (empty tuple for
+  `wiki_to_document`, same precedent as issue #7's `project=""`) — a pure
+  projection-correctness fix inside the not-yet-adopted `rag/` toolkit, same shape as
+  issue #7's `project` field fix, **implementable now** without touching `nexus/` or the
+  adoption gate. (b) Actually grounding a chosen label against cited evidence in
+  `nexus/proposals.py`'s `validate_proposal` needs `nexus/` to receive evidence carrying a
+  `labels` field at all, which requires issue #10's wiring — **deferred**, not designed
+  here.
+- Also fixed a stale adjacent finding while editing `docs/RAG_DESIGN.md`'s "every indexed
+  document carries at least" field list: it never listed `project` even though issue #7
+  added it as a real `IndexDocument` field; added `project` (retroactive) and `labels`
+  (this session's design target, not yet implemented) to the list with a note.
+  `guides/RAG_JIRA_INGESTION.md`'s `fields.labels` → `metadata.labels` mapping row got a
+  design note that the value still doesn't reach `IndexDocument` yet.
+- No code changed — `nexus/*.py` and `rag/*.py` untouched. Verification:
+  `python3 -m unittest discover -s tests` — **187/187 passing** (3 PG-registry tests skip,
+  expected, doc-only change); `git diff --check` clean.
+- Not yet committed. Decision (a) from #6 (`IndexDocument.labels`) is ready to implement
+  as its own slice independent of #10 — a natural next step. #5 needs no implementation
+  (declined the contract change); whether to close #5/#6 on GitHub now (like #2/#3) or
+  after (a) is implemented is the user's call, not yet decided.
+
 ## Severity/impact/priority scoring design for issue #3 (2026-09-12)
 
 - Read this handoff plus `docs/INDEX.md`; git state matched (clean, `main`, `cba1cd1`
@@ -629,14 +671,19 @@
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
   #6, #10 all need a design decision first...~~
-- **Issue #3 is now resolved by design and closed** (see its entry above; commit
-  `a466e99`). **Start here next session**: remaining open gap issues are #5 (input contract
-  fields — needs a versioning decision, breaking v1 event/corpus schema), #6
-  (evidence-to-label linkage in `rag/` — blocks #4's deferred `root-cause` dimension and any
-  future `component` registry work), #10 (nexus↔rag wiring, gated by the RAG adoption
-  boundary in `docs/RAG_DESIGN.md`). All three still need a design decision before coding;
-  #5/#10 additionally need an explicit versioning/adoption decision, not just a coding
-  slice.
+- **Issue #3 is resolved by design and closed** (commit `a466e99`). **Issues #5 and #6 are
+  now designed** (see the entry above) but not yet committed, implemented, or closed on
+  GitHub. **Start here next session**:
+  1. Commit the #5/#6 design doc changes, then decide with the user whether to close #5/#6
+     now (like #2/#3) or after #6 decision (a) below is implemented.
+  2. Implement #6 decision (a): add `IndexDocument.labels` in `rag/contracts.py`
+     (`issue_to_documents`/`wiki_to_document` wiring, `tests/test_rag_*.py` coverage). This
+     is ready now, file-disjoint from everything else, no adoption-gate conflict.
+  3. Issue #10 (nexus↔rag wiring) remains excluded/blocked by `docs/RAG_DESIGN.md`'s
+     no-pre-eval-gate-adoption non-goal — it needs an explicit gate/adoption decision from
+     the user before any design or coding, not just a coding slice. #6 decision (b)
+     (grounding labels against evidence in `nexus/proposals.py`) is deferred to whenever
+     #10 is decided.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2

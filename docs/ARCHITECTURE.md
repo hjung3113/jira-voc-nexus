@@ -445,6 +445,108 @@ already exists (issue #4), and the evidence-ranking score already stays
 internal by design. The only follow-up is documentation (this section plus
 the [docs/INTEGRATION.md](INTEGRATION.md) future-work note).
 
+## Input contract versioning (design, GitHub issue #5)
+
+[GitHub issue #5](https://github.com/hjung3113/jira-voc-nexus/issues/5)
+worried that the strict, exact-field-set `Event`/corpus contracts
+(`docs/TEMPLATES.md` §3–4) have no place to carry component, severity, or
+root-cause data, and that adding such fields later would be a breaking
+change for a producer already shipping against v1.
+
+### Decision: no Event/corpus contract change — the premise no longer holds
+
+Every dimension issue #5 named has since been designed as **in-runtime
+inferred, not producer-supplied**:
+
+- **severity** — resolved by issue #4's `severity:*` label and reaffirmed by
+  issue #3's decision above: an LLM judgment over evidence text, never a
+  producer field.
+- **root-cause** — issue #4 deferred this pending evidence-to-label linkage;
+  the "Evidence-to-label linkage" section below designs that linkage as an
+  addition to the `rag/` evidence side (`IndexDocument`), not the `Event`
+  input contract.
+- **component** — issue #4 deferred this pending a bounded component/project
+  registry to classify against. That registry, if and when it's built, is a
+  *evidence-side* data question (which components appear in known corpus
+  documents — `IndexDocument.component` already carries this per-document,
+  unvalidated against any enum), not something a producer needs to supply on
+  the incoming `Event`.
+
+Since nothing identified so far needs a new `Event`/corpus field, the
+breaking-change risk issue #5 raised does not materialize: `Event` stays
+exactly `event_id/issue_key/project/summary/description/labels`, and the
+corpus document contract stays exactly `id/project/title/text/resolved/url`,
+both unchanged, both still strict/fail-closed on unknown fields (per
+`nexus/models.py`).
+
+This is **not** a claim that the input contract can never change — if a
+future, not-yet-identified need requires a producer-supplied field (for
+example, a real SLA/ownership field a producer's own system already tracks
+and nexus has no way to infer), that need still requires its own explicit
+versioning decision (additive optional field vs. a hard v2 cutover, and what
+a v2 replay does with v1-shaped stored events, mirroring how the v1→v2
+*output* marker cutover was handled) at the time it's identified — not
+designed speculatively now, per this project's "no pre-building outside the
+current MVP" rule.
+
+### Implementation
+
+None — this is a design-only resolution declining a contract change, not a
+code change. `nexus/models.py`'s `Event`/`Document` and
+`docs/TEMPLATES.md` §3–4 are unchanged.
+
+## Evidence-to-label linkage (design, GitHub issue #6)
+
+[GitHub issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6)
+found that source-issue labels are ingested into `NormalizedIssue.metadata`
+(`guides/RAG_JIRA_INGESTION.md`'s `fields.labels` → `metadata.labels`
+mapping) but dropped at `issue_to_documents` projection — `IndexDocument`
+has no `labels` field at all — so nothing ties a label choice to the
+evidence that's supposed to justify it, unlike `customer_reply`/
+`engineering_action` text, which `validate_proposal` already grounds against
+cited evidence lexically.
+
+This gap has two independent halves with different implementability today:
+
+### Decision (a): add `IndexDocument.labels`, implementable now
+
+Add `labels: Tuple[str, ...]` to `rag/contracts.py`'s `IndexDocument`,
+following the exact pattern already used for `entity_ids` (`_string_tuple`
+parsing, empty tuple where a source has no label concept). `issue_to_documents`
+sources it from `issue.metadata.get("labels", [])`, the same way `component`/
+`system` are already read from `metadata`. `wiki_to_document` sets
+`labels=()` — a `WikiPage` has no label concept, the same precedent
+`project=""` established for issue #7. This is a pure projection-correctness
+fix inside the not-yet-adopted `rag/` POC toolkit: it does not touch
+`nexus/`, does not wire `rag/` into the nexus runtime, and does not require
+passing the evaluation gate — it fixes data that is already being computed
+and silently discarded, exactly like issue #7's `project` field fix. Safe to
+implement in its own slice without waiting on issue #10.
+
+### Decision (b): grounding labels against evidence in `nexus/proposals.py` is deferred to issue #10
+
+The other half of the gap — `validate_proposal` actually checking a chosen
+label against cited evidence's labels, the way it already checks
+`customer_reply`/`engineering_action` text — needs `nexus/` to receive
+evidence that carries a `labels` field at all. Today it does not:
+`NexusService.process` retrieves evidence only through
+`nexus.retrieval.retrieve`, which returns `nexus.models.Document` (the
+CLI's own fixture corpus contract, decided above to stay unchanged), never
+`rag.contracts.IndexDocument`. Wiring `nexus/` to consume `rag/` evidence at
+all is issue #10, explicitly excluded from this design session (blocked by
+`docs/RAG_DESIGN.md`'s no-pre-eval-gate-adoption non-goal). Grounding labels
+against evidence is therefore deferred to whenever #10 is designed and
+implemented — recorded here so that work is not re-discovered from scratch.
+
+### Implementation
+
+Not yet implemented. Decision (a) (`rag/contracts.py`'s `IndexDocument.labels`
+field, `issue_to_documents`/`wiki_to_document` wiring, a
+`guides/RAG_JIRA_INGESTION.md` note that `metadata.labels` now reaches the
+index document, and `tests/test_rag_*.py` coverage) is ready to implement as
+its own slice, independent of #10. Decision (b) (`nexus/proposals.py`
+grounding) has no implementation path until #10 lands.
+
 ## OpenCode boundary
 
 For each new event with evidence, the adapter runs exactly one OpenCode

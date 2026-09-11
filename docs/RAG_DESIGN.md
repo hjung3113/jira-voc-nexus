@@ -292,13 +292,24 @@ Every indexed document carries at least:
 ```text
 source_type
 document_type
+project
 system
 component
 entity_ids
 trust_level
 source_id
 updated_at
+labels
 ```
+
+**Stale-list fix (2026-09-12)**: `project` (added for [GitHub issue
+#7](https://github.com/hjung3113/jira-voc-nexus/issues/7), the same-project
+retrieval boost's actual comparison field) and `labels` (design target for
+[GitHub issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6), not
+yet implemented — see `docs/ARCHITECTURE.md`'s "Evidence-to-label linkage"
+section) were missing from this list even though `project` has been a real
+`IndexDocument` field since #7 landed. `doc_id`/`title`/`text` stay implicit
+(every document needs an id and content) and are not re-listed here.
 
 ## Context construction
 
