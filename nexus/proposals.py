@@ -10,7 +10,11 @@ from .models import Document, Event, normalize_text
 from .retrieval import lexical_tokens
 
 
-ALLOWED_LABELS = frozenset({"needs-triage", "possible-duplicate"})
+TRIAGE_LABELS = frozenset({"needs-triage", "possible-duplicate"})
+SEVERITY_LABELS = frozenset(
+    {"severity:low", "severity:medium", "severity:high", "severity:critical"}
+)
+ALLOWED_LABELS = TRIAGE_LABELS | SEVERITY_LABELS
 
 
 def _clean_audience_text(value: Any, field: str) -> str:
@@ -76,6 +80,8 @@ def validate_proposal(value: Any, evidence: Sequence[Document]) -> Dict[str, Any
         raise ProposalValidationError("labels must be a list of strings")
     if len(labels) != len(set(labels)) or any(label not in ALLOWED_LABELS for label in labels):
         raise ProposalValidationError("proposal contains an unknown or duplicate label")
+    if sum(label in SEVERITY_LABELS for label in labels) > 1:
+        raise ProposalValidationError("proposal contains multiple severity labels")
 
     evidence_by_id = {document.id: document for document in evidence}
     return {
@@ -150,6 +156,25 @@ def recipients(proposal: Mapping[str, Any]) -> List[str]:
     return result
 
 
+def audience_coverage(proposal: Mapping[str, Any]) -> str:
+    """Return the deterministic coverage of the grounded audience fields."""
+
+    customer_reply = proposal["customer_reply"] is not None
+    engineering_action = proposal["engineering_action"] is not None
+    if customer_reply and engineering_action:
+        return "both"
+    if customer_reply:
+        return "customer-only"
+    if engineering_action:
+        return "engineering-only"
+    return "neither"
+
+
+def _rendered_labels(proposal: Mapping[str, Any]) -> List[str]:
+    coverage_label = "audience-coverage:" + audience_coverage(proposal)
+    return sorted(list(proposal["labels"]) + [coverage_label])
+
+
 def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], event_id: str) -> str:
     """Render comment format v2: header, audience sections, evidence, labels, marker.
 
@@ -168,7 +193,7 @@ def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], ev
         lines.extend(["", "Evidence:"])
         for source_id, url in sources:
             lines.append("- " + source_id + ": " + url)
-    lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    lines.extend(["", "Labels: " + ", ".join(_rendered_labels(proposal))])
     lines.append("Recipients: " + (", ".join(recipient_list) or "none"))
     lines.extend(["", "voc-nexus-comment|v2|" + marker_id])
     return "\n".join(lines)
@@ -201,7 +226,7 @@ def render_issue(event: Event, proposal: Mapping[str, Any], evidence: Sequence[D
         for source_id, url in sources:
             description_lines.append("- " + source_id + ": " + url)
 
-    description_lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    description_lines.extend(["", "Labels: " + ", ".join(_rendered_labels(proposal))])
     description_lines.append("Recipients: " + (", ".join(recipient_list) or "none"))
     marker = "voc-nexus-issue|v2|" + marker_id
     description_lines.extend(["", marker])

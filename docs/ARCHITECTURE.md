@@ -113,7 +113,7 @@ these three fields:
 {
   "customer_reply": {"text": "string", "evidence_ids": ["known-id"]},
   "engineering_action": {"text": "string", "evidence_ids": ["known-id"]},
-  "labels": ["possible-duplicate"]
+  "labels": ["possible-duplicate", "severity:medium"]
 }
 ```
 
@@ -136,12 +136,13 @@ The exact allowlist and limits:
   tokens must overlap with at least one title/text token of its own cited
   source set. A source cited by one audience field does not ground the
   other.
-- `labels` is a list of unique strings; the only allowed values are
-  `needs-triage` and `possible-duplicate` — unchanged from v1. Whether a
-  third label dimension (e.g. distinguishing "engineering action only, no
-  customer reply produced") is needed is an open question for the
-  companion taxonomy slice (GitHub issue #4), not decided here. See "Label
-  taxonomy dimensions (design, GitHub issue #4)" below for the resolution.
+- `labels` is a list of unique raw strings. `needs-triage` and
+  `possible-duplicate` retain their v1 meanings and may co-occur; at most one
+  of `severity:low`, `severity:medium`, `severity:high`, or
+  `severity:critical` may be present. `audience-coverage:*` is never accepted
+  from the engine/model — code computes that value from the two audience
+  fields and adds it only to the public/rendered surfaces. Unknown or
+  duplicate labels fail closed.
 - When there is no evidence, the engine is not called, and
   `{"customer_reply": null, "engineering_action": null, "labels":
   ["needs-triage"]}` is produced — unchanged in spirit from v1.
@@ -274,14 +275,15 @@ address, assign, or notify anyone.
   `recommendations` shape to the actual v2 shape — both done as part of this
   same design-record change, not a remaining follow-up.
 
-## Label taxonomy dimensions (design, GitHub issue #4)
+## Label taxonomy dimensions (implemented, GitHub issue #4)
 
-**Design only, not yet implemented.** [GitHub issue
-#4](https://github.com/hjung3113/jira-voc-nexus/issues/4) is that
-`ALLOWED_LABELS` is exactly `{needs-triage, possible-duplicate}` — one
-dimension, no severity/component/root-cause/fix-type signal anywhere. This
-section records two decisions that unblock part of that gap without a
-breaking input-contract change; it explicitly leaves the rest open.
+**Implemented 2026-09-11.** [GitHub issue
+#4](https://github.com/hjung3113/jira-voc-nexus/issues/4) originally recorded
+that `ALLOWED_LABELS` had only `{needs-triage, possible-duplicate}` — one
+dimension, with no severity/component/root-cause/fix-type signal anywhere.
+This section records the two additive dimensions implemented from that design
+without a breaking input-contract change; component, root-cause, and fix-type
+remain explicitly deferred below.
 
 ### Decision: severity/component/root-cause values are in-runtime inferred, not producer-supplied
 
@@ -355,27 +357,27 @@ safeguard, per the existing proposal-validation boundary).
   opposite). No separate `fix-type` dimension is added to avoid two labels
   encoding the same signal.
 
-### Implementation follow-up (not done in this design-only session)
+### Implementation
 
-- `nexus/proposals.py`: `ALLOWED_LABELS` becomes dimension-aware (a
-  `{"triage": {...}, "audience_coverage": {...}, "severity": {...}}`
-  structure or equivalent), with cardinality rules (`audience_coverage`
-  exactly one value, `severity` at most one) enforced in `validate_proposal`,
-  not left to convention. A new `audience_coverage(proposal) -> str` pure
-  function (parallel to `recipients()`) computes the value; `render_comment`/
-  `render_issue`'s `Labels:` line and `fixture_proposal` both need updating.
-- `nexus/opencode.py`: `_request_message`'s `instructions` gains the
-  `severity:*` selection/omission policy described above, next to the
-  existing audience/duplication policy from issue #11.
-- `tests/test_nexus.py`: cardinality-violation cases (two `severity:*`
-  values, two `audience_coverage:*` values, an `audience_coverage:*` value
-  computed by the engine rather than the renderer — must be rejected or
-  ignored per whichever cardinality rule lands), all four `audience-coverage`
-  cases at the public-result level, and severity omission-vs-selection cases.
-- [docs/TEMPLATES.md](TEMPLATES.md) §5: document the two new dimensions next
-  to the existing two-label description once implemented, with real-example
-  blocks synced to actual renderer output (same pattern as the v2 audience
-  split and issue #8 recipient routing before it).
+- `nexus/proposals.py`: dimension-aware raw allowlisting adds the four
+  `severity:*` values while preserving unrestricted co-occurrence of the two
+  triage labels. `validate_proposal` rejects unknown/disallowed labels,
+  including model-supplied `audience-coverage:*`, and rejects more than one
+  severity value. `audience_coverage(proposal) -> str` computes the four
+  coverage cases; both renderers add the prefixed computed value to the same
+  sorted `Labels:` line as the raw labels. `fixture_proposal` remains a fixed
+  demo heuristic and emits no severity judgment.
+- `nexus/service.py`: the public result exposes the same
+  `audience_coverage` value computed from the validated proposal.
+- `nexus/opencode.py`: `_request_message` describes the four severity values,
+  the evidence-signalled selection policy, omission when evidence gives no
+  signal, and the prohibition on emitting `audience-coverage:*`; the existing
+  audience/duplication judgment instructions remain intact.
+- `tests/test_nexus.py`: raw-label cardinality/disallowlist cases, single
+  severity acceptance, all four public-result coverage cases, and computed
+  coverage in both rendered formats are covered.
+- [docs/TEMPLATES.md](TEMPLATES.md) §5 documents both implemented dimensions;
+  its current v2 examples reflect the fixture CLI's computed label output.
 
 ## OpenCode boundary
 

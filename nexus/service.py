@@ -7,7 +7,14 @@ from typing import Any, Dict, Optional, Sequence
 from .errors import EngineError
 from .models import Document, Event, parse_corpus, parse_event, payload_fingerprint
 from .opencode import OpenCodeEngine
-from .proposals import fixture_proposal, recipients, render_comment, render_issue, validate_proposal
+from .proposals import (
+    audience_coverage,
+    fixture_proposal,
+    recipients,
+    render_comment,
+    render_issue,
+    validate_proposal,
+)
 from .retrieval import retrieve
 from .storage import StateStore
 
@@ -47,6 +54,7 @@ class NexusService:
                     raise EngineError("proposal engine failed") from exc
             proposal = validate_proposal(raw_proposal, evidence)
             recipient_list = recipients(proposal)
+            coverage = audience_coverage(proposal)
             engine_name = str(getattr(self.engine, "name", "unknown"))
             result = {
                 "comment": render_comment(proposal, evidence, event.event_id),
@@ -61,6 +69,7 @@ class NexusService:
                 "labels": proposal["labels"],
                 "published": False,
                 "recipients": recipient_list,
+                "audience_coverage": coverage,
                 "state": "prepared",
             }
             return result

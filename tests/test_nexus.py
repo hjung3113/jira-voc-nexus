@@ -14,7 +14,14 @@ from unittest import mock
 from nexus.errors import EngineError, ProposalValidationError, StateConflictError
 from nexus.models import parse_corpus, parse_event
 from nexus.opencode import OpenCodeEngine
-from nexus.proposals import ALLOWED_LABELS, recipients, render_comment, render_issue, validate_proposal
+from nexus.proposals import (
+    ALLOWED_LABELS,
+    audience_coverage,
+    recipients,
+    render_comment,
+    render_issue,
+    validate_proposal,
+)
 from nexus.retrieval import retrieve
 from nexus.service import FixtureEngine, NexusService
 
@@ -147,6 +154,7 @@ class NexusTests(unittest.TestCase):
         self.assertTrue(first["demo_only"])
         self.assertEqual(first["labels"], ["possible-duplicate"])
         self.assertEqual(first["recipients"], ["user-support", "dev-team"])
+        self.assertEqual(first["audience_coverage"], "both")
         self.assertEqual(first["customer_reply"]["evidence_ids"], ["PAY-42"])
         self.assertEqual(first["engineering_action"]["evidence_ids"], ["PAY-42"])
         self.assertIn("https://jira.example.local/browse/PAY-42", first["comment"])
@@ -185,7 +193,9 @@ class NexusTests(unittest.TestCase):
         self.assertIsNone(result["engineering_action"])
         self.assertEqual(result["labels"], ["needs-triage"])
         self.assertEqual(result["recipients"], [])
+        self.assertEqual(result["audience_coverage"], "neither")
         self.assertIn("Recipients: none", result["comment"])
+        self.assertIn("Labels: audience-coverage:neither, needs-triage", result["comment"])
         self.assertNotIn("http", result["comment"])
 
     def test_invalid_model_source_and_ungrounded_text_are_rejected(self):
@@ -215,6 +225,32 @@ class NexusTests(unittest.TestCase):
                 },
                 evidence,
             )
+
+    def test_label_taxonomy_rejects_multiple_severity_and_computed_audience_labels(self):
+        for labels in (
+            ["severity:low", "severity:high"],
+            ["audience-coverage:both"],
+        ):
+            with self.subTest(labels=labels):
+                with self.assertRaises(ProposalValidationError):
+                    validate_proposal(
+                        {
+                            "customer_reply": None,
+                            "engineering_action": None,
+                            "labels": labels,
+                        },
+                        AUDIENCE_EVIDENCE,
+                    )
+
+    def test_label_taxonomy_accepts_single_severity_label(self):
+        proposal = {
+            "customer_reply": None,
+            "engineering_action": None,
+            "labels": ["needs-triage", "severity:critical"],
+        }
+        validated = validate_proposal(proposal, AUDIENCE_EVIDENCE)
+        self.assertEqual(validated["labels"], ["needs-triage", "severity:critical"])
+
     def test_opencode_args_environment_and_valid_json_event(self):
         model = "approved/demo-model"
         stdout = v1_output(
@@ -260,9 +296,15 @@ class NexusTests(unittest.TestCase):
             {"customer_reply", "engineering_action", "labels"},
         )
         self.assertTrue(set(request_payload["output_contract"]["labels"]).issubset(ALLOWED_LABELS))
-        self.assertEqual(request_payload["output_contract"]["labels"], ["possible-duplicate"])
+        self.assertEqual(
+            request_payload["output_contract"]["labels"], ["possible-duplicate", "severity:medium"]
+        )
         instructions = request_payload["instructions"]
-        self.assertIn("The only allowed labels are needs-triage and possible-duplicate.", instructions)
+        self.assertIn(
+            "The allowed raw labels are needs-triage, possible-duplicate, and at most one of severity:low, severity:medium, severity:high, or severity:critical.",
+            instructions,
+        )
+        self.assertIn("Never emit an audience-coverage:* label; code computes that dimension.", instructions)
         self.assertIn(
             "Put customer-facing impact, status, or guidance in customer_reply, and put internal technical diagnosis or remediation in engineering_action.",
             instructions,
@@ -273,6 +315,14 @@ class NexusTests(unittest.TestCase):
         )
         self.assertIn(
             "Choose needs-triage by default whenever no evidence document clearly establishes that same underlying problem, including when evidence is present but the match is unclear.",
+            instructions,
+        )
+        self.assertIn(
+            "Choose at most one severity:* label only when the cited evidence text itself signals severity: data loss, an outage, no workaround, or security impact supports severity:high or severity:critical; a documented workaround or cosmetic issue supports severity:low or severity:medium.",
+            instructions,
+        )
+        self.assertIn(
+            "Omit all severity:* labels rather than guessing when the cited evidence gives no severity signal, following the same null-not-invented rule.",
             instructions,
         )
         self.assertEqual(kwargs["cwd"].startswith("/"), True)
@@ -451,7 +501,9 @@ class NexusTests(unittest.TestCase):
         evidence_index = lines.index("Evidence:")
         pay42_index = lines.index("- PAY-42: https://jira.example.local/browse/PAY-42")
         pay43_index = lines.index("- PAY-43: https://jira.example.local/browse/PAY-43")
-        labels_index = lines.index("Labels: needs-triage, possible-duplicate")
+        labels_index = lines.index(
+            "Labels: audience-coverage:both, needs-triage, possible-duplicate"
+        )
         recipients_index = lines.index("Recipients: user-support, dev-team")
         self.assertLess(customer_index, customer_text_index)
         self.assertLess(customer_text_index, engineering_index)
@@ -554,6 +606,7 @@ class NexusTests(unittest.TestCase):
         self.assertLess(customer_index, engineering_index)
         self.assertLess(engineering_index, evidence_index)
         self.assertLess(evidence_index, labels_index)
+        self.assertEqual(lines[labels_index], "Labels: audience-coverage:both, possible-duplicate")
         self.assertLess(labels_index, recipients_index)
         self.assertLess(recipients_index, len(lines) - 1)
         self.assertIn("Review the resolved guidance for PAY-42.", lines)
@@ -609,10 +662,11 @@ class NexusTests(unittest.TestCase):
             {
                 "comment", "customer_reply", "demo_only", "dry_run", "engine",
                 "engineering_action", "event_id", "issue", "issue_key", "labels",
-                "published", "recipients", "state",
+                "published", "recipients", "audience_coverage", "state",
             },
         )
         self.assertEqual(result["recipients"], ["user-support", "dev-team"])
+        self.assertEqual(result["audience_coverage"], "both")
         self.assertEqual(
             result["comment"].split("\n")[-1],
             "voc-nexus-comment|v2|" + result["event_id"],
@@ -655,6 +709,63 @@ class NexusTests(unittest.TestCase):
 
         self.assertEqual(customer_result["recipients"], ["user-support"])
         self.assertEqual(engineering_result["recipients"], ["dev-team"])
+
+    def test_public_result_audience_coverage_for_all_four_cases(self):
+        cases = (
+            (
+                "customer-only",
+                {
+                    "customer_reply": {
+                        "text": "The gateway timeout was resolved; retry the payment confirmation.",
+                        "evidence_ids": ["PAY-42"],
+                    },
+                    "engineering_action": None,
+                    "labels": ["possible-duplicate"],
+                },
+            ),
+            (
+                "engineering-only",
+                {
+                    "customer_reply": None,
+                    "engineering_action": {
+                        "text": "Investigate the gateway timeout affecting payment confirmation.",
+                        "evidence_ids": ["PAY-42"],
+                    },
+                    "labels": ["possible-duplicate"],
+                },
+            ),
+            (
+                "both",
+                {
+                    "customer_reply": {
+                        "text": "The gateway timeout was resolved; retry the payment confirmation.",
+                        "evidence_ids": ["PAY-42"],
+                    },
+                    "engineering_action": {
+                        "text": "Investigate the gateway timeout affecting payment confirmation.",
+                        "evidence_ids": ["PAY-42"],
+                    },
+                    "labels": ["possible-duplicate"],
+                },
+            ),
+            (
+                "neither",
+                {
+                    "customer_reply": None,
+                    "engineering_action": None,
+                    "labels": ["needs-triage"],
+                },
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for expected, proposal in cases:
+                with self.subTest(expected=expected):
+                    result = NexusService(
+                        str(Path(directory) / (expected + ".sqlite3")),
+                        engine=StubProposalEngine(proposal),
+                    ).process(self.event, self.corpus)
+                    self.assertEqual(result["audience_coverage"], expected)
+                    self.assertEqual(audience_coverage(proposal), expected)
 
     def test_customer_reply_only_grounds_and_renders(self):
         proposal = {

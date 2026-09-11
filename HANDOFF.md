@@ -1,5 +1,35 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Issue #4 implemented: label taxonomy dimensions (2026-09-11, later session)
+
+- Implemented the design recorded in the "Label taxonomy dimensions design for issue #4"
+  entry below, per `voc-slice` (single-worker orchestration; a contract/validation/render
+  change, no ACL/replay surface touched).
+- Orchestration record: Run `run_9288b20bb2e2`, Task `task_8b4d6d77eb48`, `worker-start
+  --agent codex --model gpt-5.6-luna --effort max` in the current worktree. Completed
+  cleanly with `worker_done`, released.
+- Change (`nexus/proposals.py`, `nexus/service.py`, `nexus/opencode.py`,
+  `tests/test_nexus.py`, `docs/ARCHITECTURE.md`, `docs/TEMPLATES.md`): `ALLOWED_LABELS`
+  split into `TRIAGE_LABELS` (`needs-triage`/`possible-duplicate`, unchanged semantics) and
+  `SEVERITY_LABELS` (`severity:low|medium|high|critical`, model-emittable, at most one
+  enforced in `validate_proposal`). New `audience_coverage(proposal) -> str` (parallel to
+  `recipients()`) computes `customer-only`/`engineering-only`/`both`/`neither`; the value is
+  added as a prefixed `audience-coverage:<value>` entry to the rendered `Labels:` line by
+  both renderers and exposed as the public result's new `audience_coverage` key. A model
+  attempting to emit `audience-coverage:*` directly fails validation (unknown label, fail
+  closed). `nexus/opencode.py`'s prompt gained the severity selection/omission policy
+  (evidence-signalled selection, never invent) alongside the existing issue #11
+  audience/duplication policy. `component`/`root-cause`/`fix-type` untouched, per the design
+  doc's explicit deferral.
+- Coordinator verification (before committing): `python3 -m unittest discover -s tests -v`
+  — **187/187 passing** (3 PG-registry tests skip, expected); fixture CLI smoke run's
+  `audience_coverage: both` / `Labels: audience-coverage:both, possible-duplicate` matched
+  `docs/TEMPLATES.md`'s updated real-example blocks exactly (the worker regenerated them
+  from actual fixture CLI output rather than hand-writing them); `git diff --check` clean.
+  Reviewed the full diff directly (not just the worker's summary) before accepting it.
+- Fixture-only verification; no real OpenCode/Jira provider exercised. Not yet committed —
+  pending this handoff update, then commit/push per coordinator confirmation.
+
 ## Label taxonomy dimensions design for issue #4 (2026-09-11, later session)
 
 - Ran `voc-workflow` (design only, no `nexus/*.py` touched). User picked issue #4 as the
@@ -551,24 +581,21 @@
 
 ## Next steps
 
-- **Issue #8 is now implemented and merged** (see "Issue #8 implemented: recipient routing"
-  entry above, PR #15, `ba19d0a`) — the line below is stale, kept only as history.
+- **Issues #8 and #4 are now implemented** (see their "implemented" entries above, PR #15
+  `ba19d0a` for #8; #4 not yet committed as of this entry — see its entry above). Close
+  issue #4 on GitHub once committed/pushed, the same way #8 and #2 were closed.
   ~~**Start here next session**: issue #8's recipient-routing design is recorded in
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
-- **Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5, #6,
-  #10 all need a design decision first (see the bullet below); pick one to design before
-  coding it.
-- Before relying on it, resolve the flagged stale cross-reference in
-  `docs/TEMPLATES.md`'s label-taxonomy section (it currently points the asymmetric-
-  audience-grounding open question at issue #5, which does not match #5's actual
-  filed content — confirm with the user whether #4 or a new issue is the right target).
-- Remaining open gap issues after #8: #3 (severity/impact/priority scoring), #4 (label
-  taxonomy dimensions), #5 (input contract fields — needs a versioning decision, breaking
-  v1 event/corpus schema), #6 (evidence-to-label linkage in `rag/`), #10 (nexus↔rag
-  wiring, gated by the RAG adoption boundary in `docs/RAG_DESIGN.md`). None of these
-  share file surface with the #8 routing slice above, but #3/#4/#5 are mutually related
-  (severity/taxonomy/contract) and #5/#10 each need an explicit design/adoption decision
-  before implementation, not just a coding slice.
+  ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
+  #6, #10 all need a design decision first...~~
+- **Start here next session**: remaining open gap issues are #3 (severity/impact/priority
+  *scoring* used by retrieval/ranking — distinct from #4's now-implemented severity
+  *label*), #5 (input contract fields — needs a versioning decision, breaking v1
+  event/corpus schema), #6 (evidence-to-label linkage in `rag/` — blocks #4's deferred
+  `root-cause` dimension and any future `component` registry work), #10 (nexus↔rag wiring,
+  gated by the RAG adoption boundary in `docs/RAG_DESIGN.md`). All four still need a design
+  decision before coding; #5/#10 additionally need an explicit versioning/adoption decision,
+  not just a coding slice.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2

@@ -122,7 +122,7 @@ Engineering action:
 Evidence:  ← optional: only when a cited URL passes the gate
 <sorted "- <id>: <url>" bullets, union of both audience fields' sources>
 [blank line]
-Labels: <sorted labels, comma+space joined>
+Labels: <sorted validated raw labels plus computed audience-coverage:<value>, comma+space joined>
 Recipients: <comma+space joined recipients, or "none">
 [blank line]
 voc-nexus-comment|v2|<event_id>
@@ -141,8 +141,11 @@ voc-nexus-comment|v2|<event_id>
   still deduplicated and sorted by id, with no indication in this block of
   which audience cited which source (a reader wanting that mapping reads the
   two sections above it).
-- The `Labels:` line and the marker-always-last rule are unchanged from v1.
-  The marker is `voc-nexus-comment|v2|<event_id>` — a new version segment,
+- The `Labels:` line contains the validated raw labels plus exactly one
+  computed `audience-coverage:<customer-only|engineering-only|both|neither>`
+  value, all sorted together and comma+space joined. The model never emits the
+  computed value. The marker-always-last rule is unchanged from v1. The marker
+  is `voc-nexus-comment|v2|<event_id>` — a new version segment,
   never `v1`, so a v1 marker already looked up by a future adapter is never
   confused with a v2 one.
 - `event_id` marker-safety rejection (`|`, newline, carriage return) is
@@ -164,7 +167,7 @@ Fixture demo only: review the resolved guidance for PAY-42 concerning card.
 Evidence:
 - PAY-42: https://jira.example.local/browse/PAY-42
 
-Labels: possible-duplicate
+Labels: audience-coverage:both, possible-duplicate
 Recipients: user-support, dev-team
 
 voc-nexus-comment|v2|event-001
@@ -183,7 +186,7 @@ No grounded customer-facing response found; manual reply required.
 Engineering action:
 No grounded engineering action found; manual triage required.
 
-Labels: needs-triage
+Labels: audience-coverage:neither, needs-triage
 Recipients: none
 
 voc-nexus-comment|v2|event-001
@@ -271,7 +274,7 @@ Engineering action:
 Evidence:  ← optional: only when a cited URL passes the gate
 <sorted "- <id>: <url>" bullets, union of both audience fields' sources>
 [blank line]
-Labels: <sorted labels, comma+space joined>
+Labels: <sorted validated raw labels plus computed audience-coverage:<value>, comma+space joined>
 Recipients: <comma+space joined recipients, or "none">
 
 voc-nexus-issue|v2|<event_id>
@@ -287,7 +290,7 @@ voc-nexus-issue|v2|<event_id>
 ```json
 {
   "summary": "[VOC] Checkout card payment timeout",
-  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\nRecipients: user-support, dev-team\n\nvoc-nexus-issue|v2|event-001",
+  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: audience-coverage:both, possible-duplicate\nRecipients: user-support, dev-team\n\nvoc-nexus-issue|v2|event-001",
   "marker": "voc-nexus-issue|v2|event-001"
 }
 ```
@@ -335,10 +338,13 @@ fixture heuristic and lexical retrieval, not proof that the linked text is
 factually correct or still current — see
 [docs/ARCHITECTURE.md](ARCHITECTURE.md) for how it feeds scoring.
 
-## 5. Label taxonomy
+## 5. Label taxonomy (implemented)
 
-`nexus/proposals.py`'s `ALLOWED_LABELS` is exactly `{"needs-triage",
-"possible-duplicate"}`. No other label value passes `validate_proposal`.
+[GitHub issue #4](https://github.com/hjung3113/jira-voc-nexus/issues/4) is
+implemented as two additive dimensions on top of the original triage labels.
+The raw engine/model `labels` list accepts exactly the values below; the
+computed audience-coverage value is added by code at the public/rendered
+surfaces and is never accepted from the model.
 
 - **`needs-triage`** — no grounded recommendation was produced (no evidence
   retrieved, or the evidence produced no proposal). Workflow meaning: a human
@@ -350,24 +356,47 @@ factually correct or still current — see
   heuristic then pairs it with `needs-triage`). It is not a validator
   invariant: `validate_proposal` only checks the allowlist, never that this
   label implies a non-empty recommendation list.
+- **`severity:low`**, **`severity:medium`**, **`severity:high`**,
+  **`severity:critical`** — optional in-runtime model judgments selected only
+  when the cited evidence text itself signals severity. At most one severity
+  value may appear in a raw `labels` list; the model omits the dimension rather
+  than guessing when the evidence gives no severity signal.
 
-Both labels are proposal-time hints for human review, not automated
+`needs-triage` and `possible-duplicate` retain their original meaning and may
+co-occur. Both remain proposal-time hints for human review, not automated
 dedupe/close decisions — the CLI never publishes or resolves anything.
 
-**Resolved by design (2026-09-11), not yet implemented:** v2's `needs-triage`
-meaning ("no grounded recommendation was produced") stops being a single
-yes/no once there are two audience fields — evidence might ground
-`engineering_action` but not `customer_reply`, or vice versa. Rather than a
-third `needs-triage`/`possible-duplicate` value or a precedence rule between
-the existing two, this asymmetric case is carried by a new, separate,
-**computed** `audience-coverage:*` dimension (`customer-only` /
-`engineering-only` / `both` / `neither`) — never judged by the model, the
-same way [recipient routing](ARCHITECTURE.md) is computed rather than
-model-chosen. See [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Label taxonomy
-dimensions (design, GitHub issue #4)" section for the full design, including
-a new in-runtime-inferred (not producer-supplied) `severity:*` dimension and
-why `component`/`root-cause`/a separate `fix-type` dimension are explicitly
-deferred.
+### Computed audience coverage
+
+The asymmetric audience case is carried by a separate, deterministic
+`audience-coverage:*` dimension, computed from the already-validated proposal
+by `audience_coverage(proposal)` — never judged or emitted by the model:
+
+- `audience-coverage:customer-only` — `customer_reply` grounded,
+  `engineering_action` null
+- `audience-coverage:engineering-only` — `engineering_action` grounded,
+  `customer_reply` null
+- `audience-coverage:both` — both fields grounded
+- `audience-coverage:neither` — both fields null (the no-evidence path pairs
+  this with `needs-triage`)
+
+The public result exposes the same value as `audience_coverage`. Both
+`render_comment` and `render_issue` add the prefixed value to the validated raw
+labels before sorting the single `Labels:` line. `validate_proposal` rejects
+unknown/disallowed labels, duplicate labels, more than one `severity:*` value,
+and any attempted `audience-coverage:*` model label. Component, root-cause, and
+fix-type dimensions remain explicitly deferred; see
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s label-taxonomy section.
+
+### Real example (fixture CLI, current)
+
+The fixture engine emits no severity judgment, so its raw label remains
+`possible-duplicate`. This is the exact JSON line printed by the fixture CLI
+for `fixtures/event.json` and `fixtures/corpus.json`:
+
+```json
+{"audience_coverage": "both", "comment": "VOC triage recommendations (dry-run):\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: audience-coverage:both, possible-duplicate\nRecipients: user-support, dev-team\n\nvoc-nexus-comment|v2|event-001", "customer_reply": {"evidence_ids": ["PAY-42"], "text": "Fixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer."}, "demo_only": true, "dry_run": true, "engine": "fixture", "engineering_action": {"evidence_ids": ["PAY-42"], "text": "Fixture demo only: review the resolved guidance for PAY-42 concerning card."}, "event_id": "event-001", "issue": {"description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: audience-coverage:both, possible-duplicate\nRecipients: user-support, dev-team\n\nvoc-nexus-issue|v2|event-001", "marker": "voc-nexus-issue|v2|event-001", "summary": "[VOC] Checkout card payment timeout"}, "issue_key": "VOC-100", "labels": ["possible-duplicate"], "published": false, "recipients": ["user-support", "dev-team"], "state": "prepared"}
+```
 
 ## 6. Recipient routing (implemented)
 

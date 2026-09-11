@@ -114,7 +114,7 @@ class OpenCodeEngine:
             "output_contract": {
                 "customer_reply": {"text": "string", "evidence_ids": ["known id"]},
                 "engineering_action": {"text": "string", "evidence_ids": ["known id"]},
-                "labels": ["possible-duplicate"],
+                "labels": ["possible-duplicate", "severity:medium"],
             },
             "instructions": (
                 "Return exactly one JSON object matching output_contract. "
@@ -126,13 +126,22 @@ class OpenCodeEngine:
                 "field's sources. Use only evidence ids supplied above, and do not "
                 "include markdown or commentary. Put customer-facing impact, status, "
                 "or guidance in customer_reply, and put internal technical diagnosis "
-                "or remediation in engineering_action. The only allowed labels are "
-                "needs-triage and possible-duplicate. Choose possible-duplicate only "
+                "or remediation in engineering_action. The allowed raw labels are "
+                "needs-triage, possible-duplicate, and at most one of severity:low, "
+                "severity:medium, severity:high, or severity:critical. Never emit "
+                "an audience-coverage:* label; code computes that dimension. Choose "
+                "possible-duplicate only "
                 "when at least one evidence document describes the same underlying "
                 "problem as this event, not merely a similar symptom or a topically "
                 "related one. Choose needs-triage by default whenever no evidence "
                 "document clearly establishes that same underlying problem, including "
-                "when evidence is present but the match is unclear."
+                "when evidence is present but the match is unclear. Choose at most "
+                "one severity:* label only when the cited evidence text itself signals "
+                "severity: data loss, an outage, no workaround, or security impact "
+                "supports severity:high or severity:critical; a documented workaround "
+                "or cosmetic issue supports severity:low or severity:medium. Omit all "
+                "severity:* labels rather than guessing when the cited evidence gives "
+                "no severity signal, following the same null-not-invented rule."
             ),
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
