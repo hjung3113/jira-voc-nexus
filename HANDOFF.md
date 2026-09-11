@@ -1,5 +1,57 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Issue #2 closed as already resolved; recipient-routing design for #8 (2026-09-11, later session)
+
+- Read this file plus `docs/INDEX.md`, then checked actual `git log`/`gh issue list`
+  against the prior entries below: PR #13 (gap issue #7) is in fact merged
+  (`402ae95`) despite the prior "Gap issue #7" entry below saying "Not yet merged" —
+  that entry is now stale; trust `git log`/`gh issue view` over it. Both #7 and #11 are
+  closed. Open gaps going in: #2, #3, #4, #5, #6, #8, #10.
+- **Closed [issue #2](https://github.com/hjung3113/jira-voc-nexus/issues/2)** ("No
+  differentiated user-facing vs developer-facing action content") without new code —
+  it was already fully resolved by the audience-split v2 contract shipped in `6602a09`/
+  `ec3615f` (`nexus/proposals.py`'s `customer_reply`/`engineering_action`, independently
+  evidence-grounded). Commented with the resolving commits and closed via `gh issue
+  close 2`.
+- User picked **issue #8** (routing/recipient) as the next slice over #5 (input-contract
+  fields) and #4 (label taxonomy dimensions) — both of those need a real versioning/
+  taxonomy decision first, while #8 has a natural, low-risk signal already available
+  from the v2 audience split.
+- **Design-only session** (ran `voc-workflow`; no `nexus/*.py` touched): recorded in
+  `docs/ARCHITECTURE.md`'s new "Recipient routing (design, GitHub issue #8)" section —
+  `recipients(proposal) -> List[str]`, a pure deterministic function of which audience
+  fields are non-null (`customer_reply` → `user-support`, `engineering_action` →
+  `dev-team`, both/neither as the union/empty case), computed once and shared by
+  `nexus/service.py`'s public result and both renderers so the three call sites cannot
+  disagree. Explicitly **not** an engine-contract change (`validate_proposal`'s
+  three-key schema is untouched, the model never emits or decides recipients) and
+  explicitly **not** wired to any real Jira assignee/component/queue — that mapping is
+  out of scope until a real Jira adapter exists (`docs/INTEGRATION.md`).
+  - `docs/TEMPLATES.md`: new "6. Recipient routing (design, not yet implemented)"
+    section; the existing v2 real-example blocks are intentionally left unchanged
+    (they reflect actual current renderer output, which does not yet include the
+    future `Recipients:` line).
+  - `docs/INTEGRATION.md`: fixed a **stale, unrelated finding** discovered while
+    editing the adjacent "Proposal/model contract" section — it still described the
+    superseded v1 `recommendations`/single-list shape a full day after the v2 cutover
+    landed. Corrected to the actual v2 shape in the same edit (directly adjacent text
+    this change was already touching, not a separate refactor), and added the
+    `recipients` design note there too.
+  - Also flagged (not fixed) a second stale finding: `docs/TEMPLATES.md`'s label-
+    taxonomy "open question" paragraph cites "GitHub issue #5" for the
+    asymmetric-audience-grounding question, but the actual issue #5 as filed is about
+    input-contract fields (component/severity/root-cause), not labels — this
+    cross-reference looks wrong and needs the user/coordinator to confirm the correct
+    issue (possibly #4) before anyone relies on it. Left a correction note in place in
+    `docs/TEMPLATES.md` rather than silently repointing it.
+- Verification: `python3 -m unittest discover -s tests` — **182/182 passing** (3
+  PG-registry tests skip, expected); `git diff --check` clean. Doc-only change, no
+  behavior affected.
+- Not yet implemented or committed — this is the design record only, pending the
+  implementation follow-up listed in `docs/ARCHITECTURE.md` (`nexus/proposals.py`'s
+  `recipients()`, `nexus/service.py`'s public key, `tests/test_nexus.py` cases,
+  `docs/TEMPLATES.md` real-example updates once the renderer actually emits the line).
+
 ## Gap issue #11: OpenCode prompt policy content (2026-09-11)
 
 - Read the prior handoff's "Pick one at a time" file-ownership caution and analyzed every
@@ -393,18 +445,25 @@
 
 ## Next steps
 
-- **Start here next session**: the audience-split v2 contract is **implemented, verified,
-  and reviewed** (181/181 tests, fixture CLI confirmed, Astra medium diff review applied).
-  All work through `ec3615f` is committed and pushed to `origin/main` — nothing pending.
-- Issues #2, #5, #8 now have a real code contract to build against (`customer_reply`/
-  `engineering_action` in `nexus/proposals.py`, `nexus/service.py`'s public result, and
-  the v2 templates in `docs/TEMPLATES.md`). Pick one at a time — do not parallelize
-  given the shared `nexus/proposals.py` and `docs/TEMPLATES.md` surface. Issue #5 in
-  particular has an open question recorded in `docs/TEMPLATES.md`'s label-taxonomy
-  section (asymmetric grounding — is a third label needed when only one audience field
-  is grounded?) that a taxonomy slice should resolve.
-- After that, pick one of `docs/GAP_ANALYSIS.md`'s remaining "Suggested next-slice
-  candidates" (taxonomy dimensions, or a nexus↔rag wiring slice per issue #10).
+- **Start here next session**: issue #8's recipient-routing design is recorded in
+  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md` (see this file's
+  "Issue #2 closed as already resolved; recipient-routing design for #8" entry above)
+  but **not implemented**. The implementation follow-up is a small, well-scoped slice:
+  `nexus/proposals.py`'s `recipients()`, `nexus/service.py`'s public `recipients` key,
+  the `Recipients:` render line in both `render_comment`/`render_issue`, and the four
+  regression-test cases listed in `docs/ARCHITECTURE.md`. Confirm the design with the
+  user before implementing if anything changed since 2026-09-11.
+- Before relying on it, resolve the flagged stale cross-reference in
+  `docs/TEMPLATES.md`'s label-taxonomy section (it currently points the asymmetric-
+  audience-grounding open question at issue #5, which does not match #5's actual
+  filed content — confirm with the user whether #4 or a new issue is the right target).
+- Remaining open gap issues after #8: #3 (severity/impact/priority scoring), #4 (label
+  taxonomy dimensions), #5 (input contract fields — needs a versioning decision, breaking
+  v1 event/corpus schema), #6 (evidence-to-label linkage in `rag/`), #10 (nexus↔rag
+  wiring, gated by the RAG adoption boundary in `docs/RAG_DESIGN.md`). None of these
+  share file surface with the #8 routing slice above, but #3/#4/#5 are mutually related
+  (severity/taxonomy/contract) and #5/#10 each need an explicit design/adoption decision
+  before implementation, not just a coding slice.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2
