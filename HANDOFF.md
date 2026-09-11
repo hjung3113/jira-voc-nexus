@@ -27,8 +27,10 @@
   `docs/TEMPLATES.md`'s updated real-example blocks exactly (the worker regenerated them
   from actual fixture CLI output rather than hand-writing them); `git diff --check` clean.
   Reviewed the full diff directly (not just the worker's summary) before accepting it.
-- Fixture-only verification; no real OpenCode/Jira provider exercised. Not yet committed —
-  pending this handoff update, then commit/push per coordinator confirmation.
+- Fixture-only verification; no real OpenCode/Jira provider exercised.
+- Committed and pushed as `5a6d7b3` on `main`. Closed [GitHub issue
+  #4](https://github.com/hjung3113/jira-voc-nexus/issues/4) with a summary comment
+  (implementation, deferred sub-parts, verification), mirroring how #2/#8 were closed.
 
 ## Label taxonomy dimensions design for issue #4 (2026-09-11, later session)
 
@@ -581,9 +583,8 @@
 
 ## Next steps
 
-- **Issues #8 and #4 are now implemented** (see their "implemented" entries above, PR #15
-  `ba19d0a` for #8; #4 not yet committed as of this entry — see its entry above). Close
-  issue #4 on GitHub once committed/pushed, the same way #8 and #2 were closed.
+- **Issues #8 and #4 are now implemented, merged, and closed** (see their "implemented"
+  entries above; PR #15 `ba19d0a` for #8, commit `5a6d7b3` for #4).
   ~~**Start here next session**: issue #8's recipient-routing design is recorded in
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
