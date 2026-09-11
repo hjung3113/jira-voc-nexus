@@ -36,13 +36,28 @@ after securing the same ACL, source identity, and retention policy.
 
 ## Proposal/model contract
 
-A proposal has only `recommendations` and `labels`. A recommendation has only
-`text` and `evidence_ids`, allowing at most 5 recommendations, at most 2,000
-characters of recommendation text, and 1 to 5 unique evidence IDs per item.
-Evidence IDs must already be present in the ACL-filtered top-5 result, and the
-label allowlist is only `needs-triage` and `possible-duplicate`. The
-validator checks JSON shape, bounds, duplicates, source membership, and
-conservative lexical grounding.
+**Corrected 2026-09-11** — this section previously described the superseded
+v1 shape; it now matches the v2 audience-split contract that has been the
+actual running behavior since 2026-09-10 (see
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Proposal output contract (v2,
+audience-split)"). A proposal has only `customer_reply`,
+`engineering_action`, and `labels`. Each audience field is either `null` or
+an object with only `text` and `evidence_ids`: at most 2,000 characters of
+text, 1 to 5 unique evidence IDs. Evidence IDs must already be present in the
+ACL-filtered top-5 result, and each audience field is grounded independently
+— a source cited by one field never grounds the other. The label allowlist
+is only `needs-triage` and `possible-duplicate`. The validator checks JSON
+shape, bounds, duplicates, source membership, and conservative per-field
+lexical grounding.
+
+A `recipients` field derived from which audience fields are non-null
+(`user-support` for `customer_reply`, `dev-team` for `engineering_action`) is
+designed in [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Recipient routing"
+section for [GitHub issue #8](https://github.com/hjung3113/jira-voc-nexus/issues/8),
+but not yet implemented — it is never model output, only a deterministic
+function of the already-validated proposal, and a real adapter would still
+need its own assignee/component/queue mapping on top of it (not designed
+here).
 
 When there is no evidence, no provider process is started, and a
 `needs-triage` proposal is produced instead. Exactly one OpenCode process

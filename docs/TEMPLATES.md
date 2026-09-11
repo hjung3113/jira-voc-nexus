@@ -356,5 +356,24 @@ yes/no once there are two audience fields — evidence might ground
 `engineering_action` but not `customer_reply`, or vice versa. Whether that
 asymmetric case needs a third label, a documented precedence rule for the
 existing two, or is left implicit (a human reading the rendered `null`
-section already sees which audience is ungrounded) is tracked under
-GitHub issue #5, not settled by this document.
+section already sees which audience is ungrounded) is not settled by this
+document. **Correction (2026-09-11):** the actual open GitHub issue this
+paragraph should point to is unclear — issue #5 as filed is about the input
+event/corpus contract lacking component/severity/root-cause fields, not
+about the label taxonomy; this cross-reference predates that issue's current
+text and needs the coordinator/user to confirm the right tracking issue
+(possibly #4, "label taxonomy has no severity/component/root-cause/fix-type
+dimension") before it is relied on.
+
+## 6. Recipient routing (design, not yet implemented)
+
+[GitHub issue #8](https://github.com/hjung3113/jira-voc-nexus/issues/8) is
+closed at the design level only — see
+[docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Recipient routing" section for
+the full design. Once implemented, both `render_comment` and `render_issue`
+will add one line, `Recipients: <comma+space joined "user-support"/
+"dev-team", or "none">`, positioned after `Labels:` and before the marker
+line, in both the comment and issue v2 formats. This document's v2 real
+examples above do **not** yet include this line, because it is not yet
+produced by the renderer — do not treat the current real-example blocks as
+missing this line by oversight.

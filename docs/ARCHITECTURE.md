@@ -189,6 +189,93 @@ The following code changes implement this contract (landed 2026-09-10):
   `fixtures/corpus.json` succeeded and its exact output is reflected in
   [docs/TEMPLATES.md](TEMPLATES.md)'s v2 real-example blocks.
 
+## Recipient routing (design, GitHub issue #8)
+
+**Design recorded 2026-09-11, not yet implemented.** [GitHub issue
+#8](https://github.com/hjung3113/jira-voc-nexus/issues/8) is that no field
+anywhere says who should receive a recommended action — no user-support vs.
+dev-team split. This section is the design; "Implementation follow-up" below
+lists what a future slice must change.
+
+**Recipients are a pure, deterministic function of which audience fields the
+already-validated proposal carries — never a model output.** This follows the
+project's own boundary rule (mechanically decidable behavior belongs in
+Python, not in the LLM's judgment): whether `customer_reply` or
+`engineering_action` is grounded is already a fact the validator has
+established: `customer_reply` present → `user-support` is a recipient;
+`engineering_action` present → `dev-team` is a recipient; both present → both;
+both `null` → no recipient. In the current fixture/no-evidence path both
+fields being `null` is always paired with `labels: ["needs-triage"]`, but
+`validate_proposal` does not enforce that pairing as an invariant — it only
+allowlists label values, independently of the audience fields' nullness (see
+[docs/TEMPLATES.md](TEMPLATES.md)'s label-taxonomy section, which documents
+the same non-invariant for `possible-duplicate`). A real engine could in
+principle return both fields `null` with a different allowed label; the
+statement above describes intended behavior, not a validated guarantee.
+
+```text
+recipients(proposal) -> List[str]  # subset of ["user-support", "dev-team"], in that fixed order
+```
+
+This is not an engine-contract change. `validate_proposal`'s schema stays
+exactly `{customer_reply, engineering_action, labels}` — no fourth key, no
+schema field, and the model is never asked to decide or emit a recipient.
+`recipients` is computed once, from the already-validated proposal, by a
+single function shared by the public result and both renderers, so the three
+call sites cannot disagree about who an event was routed to.
+
+### Where it surfaces
+
+- **Public result** (`nexus/service.py`): a new `recipients` key, a list of 0
+  to 2 strings drawn only from `{"user-support", "dev-team"}`, in that fixed
+  order when both are present. Additive to the six-day-old v2 public result
+  key set (`comment`, `customer_reply`, `demo_only`, `dry_run`, `engine`,
+  `engineering_action`, `event_id`, `issue`, `issue_key`, `labels`,
+  `published`, `state`) — no existing key is removed or renamed.
+- **`render_comment`/`render_issue`**: one new `Recipients: <comma+space
+  joined, or "none">` line, placed after `Labels:` and before the marker line
+  in both formats. This is an additive widening of the v2 template, not a new
+  format version (no `v3` marker). Its own rationale (not the "Why two
+  single objects, not two lists" precedent above, which is about widening one
+  audience field to a bounded list, not about marker versioning): no real
+  Jira/write consumer exists yet (`published` is always `false`, as already
+  stated for the v1→v2 cutover itself in "Public result and operational
+  status" below), so there is nothing whose parsing a new line could break.
+  The marker line itself, and its position as the last line, are unchanged.
+
+### What this does *not* do
+
+This closes only the "no signal exists" half of issue #8. It does not wire
+`recipients` to an actual Jira assignee, component, or queue field — that
+mapping (which user-support queue, which dev-team component) requires a
+real Jira ACL/adapter connection and belongs to
+[docs/INTEGRATION.md](INTEGRATION.md)'s Jira comment/label adapter
+completion conditions, not this local scaffold. `recipients` is the
+deterministic input a future write adapter would consume; it does not itself
+address, assign, or notify anyone.
+
+### Implementation follow-up (not done in this design session)
+
+- `nexus/proposals.py`: add `def recipients(proposal: Mapping[str, Any]) ->
+  List[str]` next to `_audience_lines`/`_cited_fields`; use it from both
+  `render_comment` and `render_issue` for the new `Recipients:` line.
+- `nexus/service.py`: add the `recipients` public result key, computed via
+  the same `nexus.proposals.recipients` function on the validated proposal.
+- `tests/test_nexus.py`: four cases — both-null → `[]`/`"none"`,
+  customer-only → `["user-support"]`, engineering-only → `["dev-team"]`,
+  both → `["user-support", "dev-team"]` in that order — checked at both the
+  `recipients()` unit level and against the rendered `Recipients:` line in
+  `render_comment`/`render_issue`, plus one assertion that `nexus/service.py`
+  results carry a `recipients` key consistent with `customer_reply`/
+  `engineering_action` nullness.
+- [docs/TEMPLATES.md](TEMPLATES.md): add the `Recipients:` line to both v2
+  format descriptions and real-example blocks (comment and issue).
+- [docs/INTEGRATION.md](INTEGRATION.md): already notes `recipients` as the
+  future input to a real Jira assignee/component/queue mapping, and its
+  "Proposal/model contract" section was already corrected from the stale v1
+  `recommendations` shape to the actual v2 shape — both done as part of this
+  same design-record change, not a remaining follow-up.
+
 ## OpenCode boundary
 
 For each new event with evidence, the adapter runs exactly one OpenCode
@@ -226,7 +313,8 @@ rerank is never split into a separate model call or process.
 
 The current public CLI result provides `comment`, `customer_reply`,
 `demo_only`, `dry_run`, `engine`, `engineering_action`, `event_id`, `issue`,
-`issue_key`, `labels`, `published`, `state`. `customer_reply` and
+`issue_key`, `labels`, `published`, `state`. A `recipients` key is designed
+(see "Recipient routing" above) but not yet implemented. `customer_reply` and
 `engineering_action` replaced the earlier `recommendations` key as of the
 2026-09-10 audience-split cutover — a breaking change to the CLI's public
 JSON shape, acceptable because `published` is always `false` and no real
