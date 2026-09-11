@@ -60,6 +60,17 @@ class CountingFixture(FixtureEngine):
         return super().propose(event, evidence)
 
 
+class StubProposalEngine:
+    name = "stub"
+    demo_only = False
+
+    def __init__(self, proposal):
+        self.proposal = proposal
+
+    def propose(self, event, evidence):
+        return self.proposal
+
+
 class NoCallEngine:
     name = "opencode"
     demo_only = False
@@ -613,6 +624,37 @@ class NexusTests(unittest.TestCase):
         self.assertTrue(result["dry_run"])
         self.assertFalse(result["published"])
         self.assertEqual(result["state"], "prepared")
+
+    def test_public_result_recipients_for_single_audience_proposals(self):
+        customer_only = {
+            "customer_reply": {
+                "text": "The gateway timeout was resolved; retry the payment confirmation.",
+                "evidence_ids": ["PAY-42"],
+            },
+            "engineering_action": None,
+            "labels": ["possible-duplicate"],
+        }
+        engineering_only = {
+            "customer_reply": None,
+            "engineering_action": {
+                "text": "Investigate the gateway timeout affecting payment confirmation.",
+                "evidence_ids": ["PAY-42"],
+            },
+            "labels": ["possible-duplicate"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            service = NexusService(
+                str(Path(directory) / "customer.sqlite3"), engine=StubProposalEngine(customer_only)
+            )
+            customer_result = service.process(self.event, self.corpus)
+        with tempfile.TemporaryDirectory() as directory:
+            service = NexusService(
+                str(Path(directory) / "engineering.sqlite3"), engine=StubProposalEngine(engineering_only)
+            )
+            engineering_result = service.process(self.event, self.corpus)
+
+        self.assertEqual(customer_result["recipients"], ["user-support"])
+        self.assertEqual(engineering_result["recipients"], ["dev-team"])
 
     def test_customer_reply_only_grounds_and_renders(self):
         proposal = {
