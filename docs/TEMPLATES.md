@@ -123,6 +123,7 @@ Evidence:  ← optional: only when a cited URL passes the gate
 <sorted "- <id>: <url>" bullets, union of both audience fields' sources>
 [blank line]
 Labels: <sorted labels, comma+space joined>
+Recipients: <comma+space joined recipients, or "none">
 [blank line]
 voc-nexus-comment|v2|<event_id>
 ```
@@ -164,6 +165,7 @@ Evidence:
 - PAY-42: https://jira.example.local/browse/PAY-42
 
 Labels: possible-duplicate
+Recipients: user-support, dev-team
 
 voc-nexus-comment|v2|event-001
 ```
@@ -182,6 +184,7 @@ Engineering action:
 No grounded engineering action found; manual triage required.
 
 Labels: needs-triage
+Recipients: none
 
 voc-nexus-comment|v2|event-001
 ```
@@ -269,6 +272,7 @@ Evidence:  ← optional: only when a cited URL passes the gate
 <sorted "- <id>: <url>" bullets, union of both audience fields' sources>
 [blank line]
 Labels: <sorted labels, comma+space joined>
+Recipients: <comma+space joined recipients, or "none">
 
 voc-nexus-issue|v2|<event_id>
 ```
@@ -283,7 +287,7 @@ voc-nexus-issue|v2|<event_id>
 ```json
 {
   "summary": "[VOC] Checkout card payment timeout",
-  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\n\nvoc-nexus-issue|v2|event-001",
+  "description": "Context:\n\n- event_id: event-001\n- issue_key: VOC-100\n- project: PAY\n\nCustomer reply:\nFixture demo only: the card issue has prior resolved guidance in PAY-42 that may answer the customer.\n\nEngineering action:\nFixture demo only: review the resolved guidance for PAY-42 concerning card.\n\nEvidence:\n- PAY-42: https://jira.example.local/browse/PAY-42\n\nLabels: possible-duplicate\nRecipients: user-support, dev-team\n\nvoc-nexus-issue|v2|event-001",
   "marker": "voc-nexus-issue|v2|event-001"
 }
 ```
@@ -365,15 +369,12 @@ text and needs the coordinator/user to confirm the right tracking issue
 (possibly #4, "label taxonomy has no severity/component/root-cause/fix-type
 dimension") before it is relied on.
 
-## 6. Recipient routing (design, not yet implemented)
+## 6. Recipient routing (implemented)
 
 [GitHub issue #8](https://github.com/hjung3113/jira-voc-nexus/issues/8) is
-closed at the design level only — see
+implemented as a deterministic, renderer-level routing signal — see
 [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Recipient routing" section for
-the full design. Once implemented, both `render_comment` and `render_issue`
-will add one line, `Recipients: <comma+space joined "user-support"/
-"dev-team", or "none">`, positioned after `Labels:` and before the marker
-line, in both the comment and issue v2 formats. This document's v2 real
-examples above do **not** yet include this line, because it is not yet
-produced by the renderer — do not treat the current real-example blocks as
-missing this line by oversight.
+the full design. The public result carries the same ordered recipient list,
+and both `render_comment` and `render_issue` emit one line,
+`Recipients: <comma+space joined "user-support"/"dev-team", or "none">`,
+positioned after `Labels:` and before the marker line in both v2 formats.

@@ -139,6 +139,17 @@ def _cited_fields(proposal: Mapping[str, Any]) -> List[Mapping[str, Any]]:
     return [field for field in (proposal["customer_reply"], proposal["engineering_action"]) if field is not None]
 
 
+def recipients(proposal: Mapping[str, Any]) -> List[str]:
+    """Return deterministic recipient labels for the grounded audiences."""
+
+    result = []
+    if proposal["customer_reply"] is not None:
+        result.append("user-support")
+    if proposal["engineering_action"] is not None:
+        result.append("dev-team")
+    return result
+
+
 def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], event_id: str) -> str:
     """Render comment format v2: header, audience sections, evidence, labels, marker.
 
@@ -149,6 +160,7 @@ def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], ev
 
     marker_id = _marker_event_id(event_id)
     evidence_by_id = {document.id: document for document in evidence}
+    recipient_list = recipients(proposal)
     lines = ["VOC triage recommendations (dry-run):", ""]
     lines.extend(_audience_lines(proposal))
     sources = _evidence_gate(_cited_fields(proposal), evidence_by_id)
@@ -157,6 +169,7 @@ def render_comment(proposal: Mapping[str, Any], evidence: Sequence[Document], ev
         for source_id, url in sources:
             lines.append("- " + source_id + ": " + url)
     lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    lines.append("Recipients: " + (", ".join(recipient_list) or "none"))
     lines.extend(["", "voc-nexus-comment|v2|" + marker_id])
     return "\n".join(lines)
 
@@ -171,6 +184,7 @@ def render_issue(event: Event, proposal: Mapping[str, Any], evidence: Sequence[D
     evidence_by_id = {document.id: document for document in evidence}
     summary = normalize_text("[VOC] " + event.summary)[:80]
     marker_id = _marker_event_id(event.event_id)
+    recipient_list = recipients(proposal)
     description_lines = [
         "Context:",
         "",
@@ -188,6 +202,7 @@ def render_issue(event: Event, proposal: Mapping[str, Any], evidence: Sequence[D
             description_lines.append("- " + source_id + ": " + url)
 
     description_lines.extend(["", "Labels: " + ", ".join(sorted(proposal["labels"]))])
+    description_lines.append("Recipients: " + (", ".join(recipient_list) or "none"))
     marker = "voc-nexus-issue|v2|" + marker_id
     description_lines.extend(["", marker])
     description = "\n".join(description_lines)

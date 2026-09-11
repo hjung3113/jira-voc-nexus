@@ -14,7 +14,7 @@ from unittest import mock
 from nexus.errors import EngineError, ProposalValidationError, StateConflictError
 from nexus.models import parse_corpus, parse_event
 from nexus.opencode import OpenCodeEngine
-from nexus.proposals import ALLOWED_LABELS, render_comment, render_issue, validate_proposal
+from nexus.proposals import ALLOWED_LABELS, recipients, render_comment, render_issue, validate_proposal
 from nexus.retrieval import retrieve
 from nexus.service import FixtureEngine, NexusService
 
@@ -58,6 +58,17 @@ class CountingFixture(FixtureEngine):
         if self.delay:
             time.sleep(self.delay)
         return super().propose(event, evidence)
+
+
+class StubProposalEngine:
+    name = "stub"
+    demo_only = False
+
+    def __init__(self, proposal):
+        self.proposal = proposal
+
+    def propose(self, event, evidence):
+        return self.proposal
 
 
 class NoCallEngine:
@@ -135,6 +146,7 @@ class NexusTests(unittest.TestCase):
         self.assertEqual(first["state"], "prepared")
         self.assertTrue(first["demo_only"])
         self.assertEqual(first["labels"], ["possible-duplicate"])
+        self.assertEqual(first["recipients"], ["user-support", "dev-team"])
         self.assertEqual(first["customer_reply"]["evidence_ids"], ["PAY-42"])
         self.assertEqual(first["engineering_action"]["evidence_ids"], ["PAY-42"])
         self.assertIn("https://jira.example.local/browse/PAY-42", first["comment"])
@@ -172,6 +184,8 @@ class NexusTests(unittest.TestCase):
         self.assertIsNone(result["customer_reply"])
         self.assertIsNone(result["engineering_action"])
         self.assertEqual(result["labels"], ["needs-triage"])
+        self.assertEqual(result["recipients"], [])
+        self.assertIn("Recipients: none", result["comment"])
         self.assertNotIn("http", result["comment"])
 
     def test_invalid_model_source_and_ungrounded_text_are_rejected(self):
@@ -438,6 +452,7 @@ class NexusTests(unittest.TestCase):
         pay42_index = lines.index("- PAY-42: https://jira.example.local/browse/PAY-42")
         pay43_index = lines.index("- PAY-43: https://jira.example.local/browse/PAY-43")
         labels_index = lines.index("Labels: needs-triage, possible-duplicate")
+        recipients_index = lines.index("Recipients: user-support, dev-team")
         self.assertLess(customer_index, customer_text_index)
         self.assertLess(customer_text_index, engineering_index)
         self.assertLess(engineering_index, engineering_text_index)
@@ -445,7 +460,8 @@ class NexusTests(unittest.TestCase):
         self.assertLess(evidence_index, pay42_index)
         self.assertLess(pay42_index, pay43_index)
         self.assertLess(pay43_index, labels_index)
-        self.assertLess(labels_index, len(lines) - 1)
+        self.assertLess(labels_index, recipients_index)
+        self.assertLess(recipients_index, len(lines) - 1)
         self.assertEqual(lines[-1], "voc-nexus-comment|v2|" + event.event_id)
         self.assertFalse(comment.endswith("\n"))
 
@@ -473,6 +489,7 @@ class NexusTests(unittest.TestCase):
         self.assertIn("Engineering action:", lines)
         self.assertIn("No grounded engineering action found; manual triage required.", lines)
         self.assertNotIn("Evidence:", lines)
+        self.assertIn("Recipients: none", lines)
         self.assertEqual(lines[-1], "voc-nexus-comment|v2|" + event.event_id)
 
     def test_comment_omits_urls_that_fail_the_safe_url_gate(self):
@@ -532,11 +549,13 @@ class NexusTests(unittest.TestCase):
         engineering_index = lines.index("Engineering action:")
         evidence_index = lines.index("Evidence:")
         labels_index = next(i for i, line in enumerate(lines) if line.startswith("Labels:"))
+        recipients_index = lines.index("Recipients: user-support, dev-team")
         self.assertLess(context_index, customer_index)
         self.assertLess(customer_index, engineering_index)
         self.assertLess(engineering_index, evidence_index)
         self.assertLess(evidence_index, labels_index)
-        self.assertLess(labels_index, len(lines) - 1)
+        self.assertLess(labels_index, recipients_index)
+        self.assertLess(recipients_index, len(lines) - 1)
         self.assertIn("Review the resolved guidance for PAY-42.", lines)
         self.assertIn("Inspect the gateway timeout handling in PAY-42.", lines)
         self.assertIn("- event_id: " + event.event_id, lines)
@@ -556,6 +575,7 @@ class NexusTests(unittest.TestCase):
             issue["description"],
         )
         self.assertNotIn("Evidence:", issue["description"])
+        self.assertIn("Recipients: none", issue["description"])
         self.assertEqual(issue["description"].split("\n")[-1], issue["marker"])
 
     def test_issue_omits_urls_that_fail_the_safe_url_gate(self):
@@ -589,9 +609,10 @@ class NexusTests(unittest.TestCase):
             {
                 "comment", "customer_reply", "demo_only", "dry_run", "engine",
                 "engineering_action", "event_id", "issue", "issue_key", "labels",
-                "published", "state",
+                "published", "recipients", "state",
             },
         )
+        self.assertEqual(result["recipients"], ["user-support", "dev-team"])
         self.assertEqual(
             result["comment"].split("\n")[-1],
             "voc-nexus-comment|v2|" + result["event_id"],
@@ -603,6 +624,37 @@ class NexusTests(unittest.TestCase):
         self.assertTrue(result["dry_run"])
         self.assertFalse(result["published"])
         self.assertEqual(result["state"], "prepared")
+
+    def test_public_result_recipients_for_single_audience_proposals(self):
+        customer_only = {
+            "customer_reply": {
+                "text": "The gateway timeout was resolved; retry the payment confirmation.",
+                "evidence_ids": ["PAY-42"],
+            },
+            "engineering_action": None,
+            "labels": ["possible-duplicate"],
+        }
+        engineering_only = {
+            "customer_reply": None,
+            "engineering_action": {
+                "text": "Investigate the gateway timeout affecting payment confirmation.",
+                "evidence_ids": ["PAY-42"],
+            },
+            "labels": ["possible-duplicate"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            service = NexusService(
+                str(Path(directory) / "customer.sqlite3"), engine=StubProposalEngine(customer_only)
+            )
+            customer_result = service.process(self.event, self.corpus)
+        with tempfile.TemporaryDirectory() as directory:
+            service = NexusService(
+                str(Path(directory) / "engineering.sqlite3"), engine=StubProposalEngine(engineering_only)
+            )
+            engineering_result = service.process(self.event, self.corpus)
+
+        self.assertEqual(customer_result["recipients"], ["user-support"])
+        self.assertEqual(engineering_result["recipients"], ["dev-team"])
 
     def test_customer_reply_only_grounds_and_renders(self):
         proposal = {
@@ -623,6 +675,7 @@ class NexusTests(unittest.TestCase):
         self.assertIn("Customer reply:", lines)
         self.assertIn("Share the alpha beta guidance with the customer.", lines)
         self.assertIn("No grounded engineering action found; manual triage required.", lines)
+        self.assertIn("Recipients: user-support", lines)
         evidence_index = lines.index("Evidence:")
         self.assertEqual(lines[evidence_index + 1], "- DOC-A: https://jira.example.local/browse/DOC-A")
         self.assertNotIn("- DOC-B:", lines)
@@ -632,6 +685,7 @@ class NexusTests(unittest.TestCase):
             "No grounded engineering action found; manual triage required.",
             issue["description"],
         )
+        self.assertIn("Recipients: user-support", issue["description"])
         self.assertNotIn("DOC-B", issue["description"])
 
     def test_engineering_action_only_grounds_and_renders(self):
@@ -649,6 +703,7 @@ class NexusTests(unittest.TestCase):
         lines = render_comment(proposal, AUDIENCE_EVIDENCE, "event-001").split("\n")
         self.assertIn("No grounded customer-facing response found; manual reply required.", lines)
         self.assertIn("Review the gamma delta analysis.", lines)
+        self.assertIn("Recipients: dev-team", lines)
         evidence_index = lines.index("Evidence:")
         self.assertEqual(lines[evidence_index + 1], "- DOC-B: https://jira.example.local/browse/DOC-B")
         self.assertNotIn("- DOC-A:", lines)
@@ -658,7 +713,41 @@ class NexusTests(unittest.TestCase):
             "No grounded customer-facing response found; manual reply required.",
             issue["description"],
         )
+        self.assertIn("Recipients: dev-team", issue["description"])
         self.assertNotIn("DOC-A", issue["description"])
+
+    def test_recipients_follow_audience_fields_and_render_none(self):
+        cases = (
+            (
+                {"customer_reply": {"text": "reply"}, "engineering_action": None},
+                ["user-support"],
+            ),
+            (
+                {"customer_reply": None, "engineering_action": {"text": "action"}},
+                ["dev-team"],
+            ),
+            (
+                {
+                    "customer_reply": {"text": "reply"},
+                    "engineering_action": {"text": "action"},
+                },
+                ["user-support", "dev-team"],
+            ),
+            (
+                {"customer_reply": None, "engineering_action": None},
+                [],
+            ),
+        )
+        for audience_fields, expected in cases:
+            with self.subTest(audience_fields=audience_fields):
+                proposal = dict(audience_fields, labels=["needs-triage"])
+                self.assertEqual(recipients(proposal), expected)
+
+        null_proposal = {"customer_reply": None, "engineering_action": None, "labels": ["needs-triage"]}
+        comment_lines = render_comment(null_proposal, [], "event-001").split("\n")
+        self.assertIn("Recipients: none", comment_lines)
+        issue = render_issue(parse_event(self.event), null_proposal, [])
+        self.assertIn("Recipients: none", issue["description"])
 
     def test_disjoint_evidence_sets_render_sorted_union(self):
         proposal = {
