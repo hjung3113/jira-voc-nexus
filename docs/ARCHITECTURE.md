@@ -204,8 +204,14 @@ Python, not in the LLM's judgment): whether `customer_reply` or
 `engineering_action` is grounded is already a fact the validator has
 established: `customer_reply` present → `user-support` is a recipient;
 `engineering_action` present → `dev-team` is a recipient; both present → both;
-both `null` → no recipient (the `needs-triage` label alone still says a human
-must look at it, unrouted).
+both `null` → no recipient. In the current fixture/no-evidence path both
+fields being `null` is always paired with `labels: ["needs-triage"]`, but
+`validate_proposal` does not enforce that pairing as an invariant — it only
+allowlists label values, independently of the audience fields' nullness (see
+[docs/TEMPLATES.md](TEMPLATES.md)'s label-taxonomy section, which documents
+the same non-invariant for `possible-duplicate`). A real engine could in
+principle return both fields `null` with a different allowed label; the
+statement above describes intended behavior, not a validated guarantee.
 
 ```text
 recipients(proposal) -> List[str]  # subset of ["user-support", "dev-team"], in that fixed order
@@ -229,11 +235,13 @@ call sites cannot disagree about who an event was routed to.
 - **`render_comment`/`render_issue`**: one new `Recipients: <comma+space
   joined, or "none">` line, placed after `Labels:` and before the marker line
   in both formats. This is an additive widening of the v2 template, not a new
-  format version (no `v3` marker) — the same reasoning already used for v1→v2
-  widening candidates in "Why two single objects, not two lists" above: no
-  real Jira/write consumer exists yet (`published` is always `false`), so
-  there is nothing whose parsing this could break. The marker line itself,
-  and its position as the last line, are unchanged.
+  format version (no `v3` marker). Its own rationale (not the "Why two
+  single objects, not two lists" precedent above, which is about widening one
+  audience field to a bounded list, not about marker versioning): no real
+  Jira/write consumer exists yet (`published` is always `false`, as already
+  stated for the v1→v2 cutover itself in "Public result and operational
+  status" below), so there is nothing whose parsing a new line could break.
+  The marker line itself, and its position as the last line, are unchanged.
 
 ### What this does *not* do
 
@@ -262,12 +270,11 @@ address, assign, or notify anyone.
   `engineering_action` nullness.
 - [docs/TEMPLATES.md](TEMPLATES.md): add the `Recipients:` line to both v2
   format descriptions and real-example blocks (comment and issue).
-- [docs/INTEGRATION.md](INTEGRATION.md): note `recipients` as the future
-  input to a real Jira assignee/component/queue mapping once that adapter
-  exists; its own "Proposal/model contract" section is currently stale
-  (still describes v1's single `recommendations` list) and should be
-  corrected to the v2 shape in the same pass, since it is directly adjacent
-  text this change edits.
+- [docs/INTEGRATION.md](INTEGRATION.md): already notes `recipients` as the
+  future input to a real Jira assignee/component/queue mapping, and its
+  "Proposal/model contract" section was already corrected from the stale v1
+  `recommendations` shape to the actual v2 shape — both done as part of this
+  same design-record change, not a remaining follow-up.
 
 ## OpenCode boundary
 
