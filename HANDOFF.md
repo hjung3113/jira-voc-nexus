@@ -1,5 +1,47 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Grok 4.6 high review of the #5/#6 design commit, and a correction (2026-09-12)
+
+- User asked for a Grok 4.6 high design review of commit `4f60e4e` (the #5/#6 design entry
+  below) before implementing #6(a). Ran via Orca orchestration per this project's mandatory
+  spawn mechanism: Run `run_45082d4d21d4`, Task `task_5b41a638ec40`, dispatched to a fresh
+  `grok --model grok-4.6 --reasoning-effort high` terminal via the low-level `terminal
+  create` + `dispatch --inject` path (per this project's standing note that `worker-start
+  --model`/`--effort` isn't supported for the `grok` agent adapter). Clean run, no
+  paste-dialog stall this time, `worker_done` received normally after ~7 minutes.
+- Grok confirmed as sound: #5's decline of an Event/corpus contract change (given severity
+  is already in-runtime inferred and component/root-cause were never producer fields to
+  begin with); #6(a)'s `IndexDocument.labels` addition as a real, adoption-gate-independent
+  `rag/` projection fix matching the `entity_ids` and issue #7 `project` precedents; the
+  `guides/RAG_JIRA_INGESTION.md` and `docs/RAG_DESIGN.md` edits as accurate.
+- **One real high finding, applied**: decision (b) as originally written (deferring a
+  future `validate_proposal` check of a chosen label against cited evidence's
+  `IndexDocument.labels`, "the way `customer_reply`/`engineering_action` text is already
+  grounded") does not type-check. `nexus/proposals.py`'s `ALLOWED_LABELS` is a closed
+  taxonomy (`needs-triage`, `possible-duplicate`, `severity:low|medium|high|critical`);
+  `IndexDocument.labels` (decision (a)) carries raw source Jira tags verbatim
+  (`fixtures/rag/normalized_issues.json`'s `["parser", "reconnect"]`). A value like
+  `severity:high` can never literally appear in a source issue's own label list — these
+  are two different kinds of vocabulary, not two forms of the same thing waiting to be
+  compared. The original wording also silently contradicted the label taxonomy section's
+  own explicit statement that severity correctness "cannot and does not" get checked
+  against evidence and "stays a human-review safeguard." **Fixed** in
+  `docs/ARCHITECTURE.md`'s decision (b): replaced the mechanism with the correct framing
+  (no label-validation use for `IndexDocument.labels`; its only plausible future value is
+  an unrelated, not-yet-designed retrieval-side signal comparing the event's own unused
+  `Event.labels` against candidate documents' `IndexDocument.labels`, deferred to whenever
+  #10 is actually designed, not decided here).
+- **Two medium stale-cross-reference findings, applied**: `docs/ARCHITECTURE.md`'s #4
+  section still said issue #5 "remain[s] undecided" (line ~304, written before this
+  session) and deferred `root-cause` "until issue #6 is designed" (line ~352) — both now
+  stale since this session resolved #5 and designed #6. Both corrected to point at the new
+  sections instead of re-asserting the old undecided state.
+- Verification after applying the fixes: `python3 -m unittest discover -s tests` —
+  **187/187 passing** (3 PG-registry tests skip, expected, doc-only change); `git diff
+  --check` clean.
+- Not yet committed. `worker-release` still owed on dispatch `ctx_740b53318daf` once this
+  session's Orca cleanup step runs.
+
 ## Input-contract versioning (#5) and evidence-to-label linkage (#6) design (2026-09-12)
 
 - User asked to design #5, #6, and #10 together. Flagged before proceeding: #10 is

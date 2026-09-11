@@ -301,7 +301,9 @@ status as `customer_reply`/`engineering_action` text.
 This decision resolves the "producer-supplied vs. in-runtime" open question
 recorded in `docs/GAP_ANALYSIS.md` for the label-taxonomy half only —
 issue #3 (severity/impact/priority *scoring* used by retrieval/ranking) and
-issue #5 (input contract fields) are separate slices and remain undecided.
+issue #5 (input contract fields) were separate slices at the time; both are
+now decided — see the "Input contract versioning (design, GitHub issue #5)"
+and "Evidence-to-label linkage (design, GitHub issue #6)" sections below.
 
 ### Decision: audience coverage is a computed dimension, not an LLM-judged label
 
@@ -345,11 +347,16 @@ safeguard, per the existing proposal-validation boundary).
   toolkit's `IndexDocument` (see [docs/RAG_DESIGN.md](RAG_DESIGN.md)); adding
   one is its own slice, not a label-format decision. Deferred until that
   registry question is answered.
-- **`root-cause`** — depends on evidence-to-label linkage that issue #6
-  ("no evidence-to-label linkage in the RAG toolkit") has not yet designed;
-  inferring a root-cause category without that linkage would be an
-  ungrounded guess, which the null-not-invented doctrine above forbids.
-  Deferred until issue #6 is designed.
+- **`root-cause`** — depends on evidence-to-label linkage; issue #6 ("no
+  evidence-to-label linkage in the RAG toolkit") is now designed (see the
+  "Evidence-to-label linkage" section below), but the `IndexDocument.labels`
+  addition it designs is not yet implemented, and even once implemented it
+  does not by itself ground a `root-cause` category (see that section's
+  correction: `IndexDocument.labels` carries source Jira tags, not a
+  root-cause taxonomy). Inferring a root-cause category without an actual
+  linkage would be an ungrounded guess, which the null-not-invented doctrine
+  above forbids. Still deferred, now on implementation plus its own
+  taxonomy-design follow-up rather than on issue #6's design.
 - **`fix-type`** — the original gap's intent (distinguishing "needs a code
   fix" from "needs a support reply") is already covered by the
   `audience-coverage` dimension above (`engineering-only` implies a fix is
@@ -501,12 +508,18 @@ code change. `nexus/models.py`'s `Event`/`Document` and
 found that source-issue labels are ingested into `NormalizedIssue.metadata`
 (`guides/RAG_JIRA_INGESTION.md`'s `fields.labels` → `metadata.labels`
 mapping) but dropped at `issue_to_documents` projection — `IndexDocument`
-has no `labels` field at all — so nothing ties a label choice to the
-evidence that's supposed to justify it, unlike `customer_reply`/
-`engineering_action` text, which `validate_proposal` already grounds against
-cited evidence lexically.
+has no `labels` field at all, a real data-loss bug independent of what
+consumes it later.
 
-This gap has two independent halves with different implementability today:
+The issue framed the impact as "nothing ties a label choice to the evidence
+that's supposed to justify it, unlike `customer_reply`/`engineering_action`
+text" — implying `validate_proposal` could eventually lexically ground a
+chosen label against evidence the same way it grounds text. **That framing
+does not survive contact with the actual vocabularies involved** (see
+decision (b)'s correction below): `nexus/`'s labels and a source issue's
+raw tags are not the same kind of thing, so this gap splits into one real,
+implementable fix and one idea that needed correcting, not two symmetric
+halves:
 
 ### Decision (a): add `IndexDocument.labels`, implementable now
 
@@ -523,20 +536,42 @@ passing the evaluation gate — it fixes data that is already being computed
 and silently discarded, exactly like issue #7's `project` field fix. Safe to
 implement in its own slice without waiting on issue #10.
 
-### Decision (b): grounding labels against evidence in `nexus/proposals.py` is deferred to issue #10
+### Decision (b), corrected 2026-09-12 after Grok 4.6 high review: not "grounding labels against evidence" — that mechanism was a vocabulary-mismatch error
 
-The other half of the gap — `validate_proposal` actually checking a chosen
-label against cited evidence's labels, the way it already checks
-`customer_reply`/`engineering_action` text — needs `nexus/` to receive
-evidence that carries a `labels` field at all. Today it does not:
-`NexusService.process` retrieves evidence only through
-`nexus.retrieval.retrieve`, which returns `nexus.models.Document` (the
-CLI's own fixture corpus contract, decided above to stay unchanged), never
-`rag.contracts.IndexDocument`. Wiring `nexus/` to consume `rag/` evidence at
-all is issue #10, explicitly excluded from this design session (blocked by
-`docs/RAG_DESIGN.md`'s no-pre-eval-gate-adoption non-goal). Grounding labels
-against evidence is therefore deferred to whenever #10 is designed and
-implemented — recorded here so that work is not re-discovered from scratch.
+This section originally proposed that, once `nexus/` could receive
+`rag/`-sourced evidence (issue #10), `validate_proposal` would check a
+chosen label against cited evidence's `labels` the same way it already
+grounds `customer_reply`/`engineering_action` text. **Grok 4.6's review
+caught that this doesn't type-check**: `nexus/proposals.py`'s
+`ALLOWED_LABELS` is a closed taxonomy the model selects from —
+`needs-triage`, `possible-duplicate`, `severity:low|medium|high|critical` —
+while `IndexDocument.labels` (decision (a) above) carries raw source Jira
+tags copied verbatim from `metadata.labels`, e.g. `["parser", "reconnect"]`
+in `fixtures/rag/normalized_issues.json`. A value like `severity:high` or
+`possible-duplicate` can never literally appear in a source issue's own
+label list — they're different vocabularies (a fixed taxonomy vs.
+free-form source tags), so "grounding" one against the other the way text
+is lexically grounded against its cited sources is not a coherent
+mechanism, not merely an unimplemented one.
+
+This also would have **contradicted the label taxonomy section above**,
+which is explicit that severity's semantic correctness "cannot and does
+not" get checked against evidence and "stays a human-review safeguard, per
+the existing proposal-validation boundary" — the same boundary this
+corrected section now respects instead of quietly overriding.
+
+**What `IndexDocument.labels` (decision (a)) is actually for, once #10
+exists**: not validating nexus's chosen taxonomy label, but a
+*retrieval-side* signal comparable to the existing same-project boost — for
+example, comparing the incoming event's own `Event.labels` (already a
+required six-field producer input, currently parsed and fingerprinted but
+otherwise unused anywhere in `nexus/`) against a candidate document's
+`IndexDocument.labels` as a ranking boost or as an input to a future
+duplicate-judgment heuristic. This is a **new, not-yet-designed idea**, not
+a decision made here — recorded so it isn't lost, but it needs its own
+design pass (what signal, how weighted, interaction with the existing
+same-project boost) when issue #10 is taken up. It is explicitly **not** a
+label-validation mechanism.
 
 ### Implementation
 
@@ -544,8 +579,9 @@ Not yet implemented. Decision (a) (`rag/contracts.py`'s `IndexDocument.labels`
 field, `issue_to_documents`/`wiki_to_document` wiring, a
 `guides/RAG_JIRA_INGESTION.md` note that `metadata.labels` now reaches the
 index document, and `tests/test_rag_*.py` coverage) is ready to implement as
-its own slice, independent of #10. Decision (b) (`nexus/proposals.py`
-grounding) has no implementation path until #10 lands.
+its own slice, independent of #10. Decision (b) is not an implementation
+item at all until issue #10 is designed and a concrete retrieval-signal use
+for `IndexDocument.labels` is chosen then.
 
 ## OpenCode boundary
 
