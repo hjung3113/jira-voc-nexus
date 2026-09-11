@@ -189,13 +189,13 @@ The following code changes implement this contract (landed 2026-09-10):
   `fixtures/corpus.json` succeeded and its exact output is reflected in
   [docs/TEMPLATES.md](TEMPLATES.md)'s v2 real-example blocks.
 
-## Recipient routing (design, GitHub issue #8)
+## Recipient routing (implemented, GitHub issue #8)
 
-**Design recorded 2026-09-11, not yet implemented.** [GitHub issue
+**Implemented 2026-09-11.** [GitHub issue
 #8](https://github.com/hjung3113/jira-voc-nexus/issues/8) is that no field
 anywhere says who should receive a recommended action — no user-support vs.
-dev-team split. This section is the design; "Implementation follow-up" below
-lists what a future slice must change.
+dev-team split. This section records the implemented deterministic signal and
+its boundaries.
 
 **Recipients are a pure, deterministic function of which audience fields the
 already-validated proposal carries — never a model output.** This follows the
@@ -254,22 +254,19 @@ completion conditions, not this local scaffold. `recipients` is the
 deterministic input a future write adapter would consume; it does not itself
 address, assign, or notify anyone.
 
-### Implementation follow-up (not done in this design session)
+### Implementation
 
-- `nexus/proposals.py`: add `def recipients(proposal: Mapping[str, Any]) ->
-  List[str]` next to `_audience_lines`/`_cited_fields`; use it from both
-  `render_comment` and `render_issue` for the new `Recipients:` line.
-- `nexus/service.py`: add the `recipients` public result key, computed via
-  the same `nexus.proposals.recipients` function on the validated proposal.
-- `tests/test_nexus.py`: four cases — both-null → `[]`/`"none"`,
+- `nexus/proposals.py`: `recipients(proposal: Mapping[str, Any]) ->
+  List[str]` sits next to `_audience_lines`/`_cited_fields` and drives the new
+  `Recipients:` line in both `render_comment` and `render_issue`.
+- `nexus/service.py`: the public `recipients` result key is computed from the
+  validated proposal with the same `nexus.proposals.recipients` function.
+- `tests/test_nexus.py`: four recipient cases — both-null → `[]`/`"none"`,
   customer-only → `["user-support"]`, engineering-only → `["dev-team"]`,
-  both → `["user-support", "dev-team"]` in that order — checked at both the
-  `recipients()` unit level and against the rendered `Recipients:` line in
-  `render_comment`/`render_issue`, plus one assertion that `nexus/service.py`
-  results carry a `recipients` key consistent with `customer_reply`/
-  `engineering_action` nullness.
-- [docs/TEMPLATES.md](TEMPLATES.md): add the `Recipients:` line to both v2
-  format descriptions and real-example blocks (comment and issue).
+  both → `["user-support", "dev-team"]` in that order — are covered at the
+  `recipients()` unit level, rendered output level, and public result level.
+- [docs/TEMPLATES.md](TEMPLATES.md): the `Recipients:` line is present in
+  both v2 format descriptions and real-example blocks (comment and issue).
 - [docs/INTEGRATION.md](INTEGRATION.md): already notes `recipients` as the
   future input to a real Jira assignee/component/queue mapping, and its
   "Proposal/model contract" section was already corrected from the stale v1
@@ -313,8 +310,7 @@ rerank is never split into a separate model call or process.
 
 The current public CLI result provides `comment`, `customer_reply`,
 `demo_only`, `dry_run`, `engine`, `engineering_action`, `event_id`, `issue`,
-`issue_key`, `labels`, `published`, `state`. A `recipients` key is designed
-(see "Recipient routing" above) but not yet implemented. `customer_reply` and
+`issue_key`, `labels`, `published`, `recipients`, `state`. `customer_reply` and
 `engineering_action` replaced the earlier `recommendations` key as of the
 2026-09-10 audience-split cutover — a breaking change to the CLI's public
 JSON shape, acceptable because `published` is always `false` and no real
