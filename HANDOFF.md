@@ -1,5 +1,64 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Issue #8 implemented: recipient routing (2026-09-11, later session)
+
+- User asked to read this handoff, pull out parallelizable remaining work, and run it in
+  parallel per the project workflow. Re-checked open gaps (#3, #4, #5, #6, #8, #10) against
+  live `gh issue view` content, not just this file: only **#8** turned out to be
+  implementation-ready — #3 has an explicit open design question (producer-supplied vs.
+  in-runtime severity, a breaking-contract decision), and #4/#5/#6/#10 are mutually coupled
+  to that same undecided taxonomy/contract question or (for #10) gated by
+  `docs/RAG_DESIGN.md`'s no-pre-eval-gate-adoption non-goal. Asked the user to confirm scope
+  rather than force a second parallel track that would have collided with #8's edits to
+  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`; user picked "implement #8 only."
+- Ran as an Orca-orchestrated worker per `voc-slice`/`orchestration`: Run `run_73d52cdbb2a8`,
+  Task `task_463bfe0b6553`, `worker-start --agent codex --model gpt-5.6-luna --effort max` in
+  the current worktree. Completed cleanly with `worker_done`, released.
+- Change (`nexus/proposals.py`, `nexus/service.py`, `tests/test_nexus.py`,
+  `docs/TEMPLATES.md`, `docs/ARCHITECTURE.md`): implements exactly the design already recorded
+  in the "Recipient routing (design, GitHub issue #8)" section — `recipients(proposal) ->
+  List[str]`, a pure function of which audience fields are grounded (`customer_reply` present
+  → `user-support`, `engineering_action` present → `dev-team`), computed once and shared by
+  `nexus/service.py`'s new public `recipients` key and a new `Recipients: <...>` line in both
+  `render_comment`/`render_issue` (after `Labels:`, before the marker line). No engine-contract
+  change: `validate_proposal`'s `{customer_reply, engineering_action, labels}` schema and the
+  v2 marker format/version are untouched; not wired to any real Jira assignee/component/queue.
+  Docs updated from "design, not yet implemented" to "implemented," with real-example blocks
+  synced to actual renderer output.
+- Coordinator verification (before opening the PR): `python3 -m unittest discover -s tests -v`
+  — **183/183 passing** (3 PG-registry tests skip, expected); `git diff --check` clean; fixture
+  CLI smoke run's `recipients` key and `Recipients: user-support, dev-team` line matched
+  `docs/TEMPLATES.md`'s example exactly.
+- Opened as PR #15. Dispatched an Astra medium review of the PR title/body + diff (Orca
+  orchestration Run `run_54c8975f315c`, Task `task_ab99bdce8f7c`) — the first `worker-start`
+  attempt hit the same `agent_prompt_stalled` failure documented elsewhere in this file for
+  OMP paste dialogs, this time on a fresh Codex terminal in a new child worktree; `worker-abandon`
+  plus a `worker-start --retry-of` onto a fresh terminal in the same worktree succeeded cleanly
+  on the second attempt (no `terminal send --text "" --enter` was needed this time — the retry
+  itself avoided whatever the first terminal choked on). **Fix for next time**: if a freshly
+  created worktree's agent terminal fails with `agent_prompt_stalled` before any confirming
+  Enter is sent, try `worker-abandon` + `worker-start --retry-of <old_dispatch>` on a new
+  terminal before assuming an Enter will unstick it — that path worked here without needing the
+  paste-dialog workaround.
+- Astra review result: 0 high, 0 medium, **1 low** — `docs/ARCHITECTURE.md`'s "Implementation"
+  section claimed all four recipient cases (`customer-only`, `engineering-only`, `both`,
+  `neither`) were covered "at the public result level," but the worker's tests only asserted
+  `NexusService.process`'s public `recipients` key for the both-present and both-null cases;
+  the two single-audience cases were only asserted at the `recipients()` unit level and the
+  rendered-text level. Verified the gap directly in `tests/test_nexus.py` before fixing.
+- Fix: added `StubProposalEngine` (returns a fixed raw proposal) and
+  `test_public_result_recipients_for_single_audience_proposals`, exercising
+  `NexusService.process` end-to-end for both single-audience cases and asserting
+  `result["recipients"]` directly — closing the actual gap the doc claimed was already closed,
+  rather than weakening the doc's claim. Re-verified: **184/184 passing**, `git diff --check`
+  clean. Pushed as a second commit on the same PR branch.
+- Merged PR #15 (squash, branch deleted) into `main` at `ba19d0a`. Re-verified on `main`:
+  184/184 passing. Issue #8 auto-closed via the PR's `Closes #8`; also left a closing comment
+  summarizing the implementation and the review finding.
+- Remaining open gaps unchanged by this session: #3, #4, #5, #6, #10 — all still blocked on the
+  design decisions described in the "Next steps" section below (unchanged from before this
+  session, since none of #3/#4/#5/#6/#10 were touched).
+
 ## Issue #2 closed as already resolved; recipient-routing design for #8 (2026-09-11, later session)
 
 - Read this file plus `docs/INDEX.md`, then checked actual `git log`/`gh issue list`
@@ -445,14 +504,13 @@
 
 ## Next steps
 
-- **Start here next session**: issue #8's recipient-routing design is recorded in
-  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md` (see this file's
-  "Issue #2 closed as already resolved; recipient-routing design for #8" entry above)
-  but **not implemented**. The implementation follow-up is a small, well-scoped slice:
-  `nexus/proposals.py`'s `recipients()`, `nexus/service.py`'s public `recipients` key,
-  the `Recipients:` render line in both `render_comment`/`render_issue`, and the four
-  regression-test cases listed in `docs/ARCHITECTURE.md`. Confirm the design with the
-  user before implementing if anything changed since 2026-09-11.
+- **Issue #8 is now implemented and merged** (see "Issue #8 implemented: recipient routing"
+  entry above, PR #15, `ba19d0a`) — the line below is stale, kept only as history.
+  ~~**Start here next session**: issue #8's recipient-routing design is recorded in
+  `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
+- **Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5, #6,
+  #10 all need a design decision first (see the bullet below); pick one to design before
+  coding it.
 - Before relying on it, resolve the flagged stale cross-reference in
   `docs/TEMPLATES.md`'s label-taxonomy section (it currently points the asymmetric-
   audience-grounding open question at issue #5, which does not match #5's actual
