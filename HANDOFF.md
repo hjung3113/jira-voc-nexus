@@ -1,5 +1,40 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Label taxonomy dimensions design for issue #4 (2026-09-11, later session)
+
+- Ran `voc-workflow` (design only, no `nexus/*.py` touched). User picked issue #4 as the
+  next slice after the cross-reference fix below.
+- Issue #4 is coupled to #3/#5 via an open "producer-supplied vs. in-runtime severity"
+  question recorded in `docs/GAP_ANALYSIS.md` — asked the user to decide it rather than
+  guessing. **User decided: in-runtime inferred (LLM/heuristic judgment over evidence),
+  not producer-supplied.** This keeps the v1/v2 event/corpus schema unchanged (no breaking
+  change, no dependency on issue #5's versioning decision).
+- Recorded in `docs/ARCHITECTURE.md`'s new "Label taxonomy dimensions (design, GitHub
+  issue #4)" section:
+  - The asymmetric-audience-grounding open question (`docs/TEMPLATES.md` §5) is resolved
+    as a new **computed** `audience-coverage:*` dimension (`customer-only`/
+    `engineering-only`/`both`/`neither`), a pure function of the proposal parallel to
+    issue #8's `recipients()` — never judged by the model, no third `needs-triage`/
+    `possible-duplicate` value or precedence rule needed.
+  - A new **LLM-judged**, omittable `severity:*` dimension (`low`/`medium`/`high`/
+    `critical`), selected only when evidence text signals it, following the existing
+    null-not-invented doctrine; `validate_proposal` would enforce structural cardinality
+    (at most one `severity:*` value) but not semantic correctness.
+  - `component` and `root-cause` dimensions are explicitly **deferred**: `component` needs
+    a bounded component/project registry that doesn't exist in `nexus/` or `rag/`'s
+    `IndexDocument`; `root-cause` needs the evidence-to-label linkage issue #6 hasn't
+    designed yet. A separate `fix-type` dimension was considered and dropped — the new
+    `audience-coverage` dimension already carries that signal (`engineering-only` implies
+    a fix is needed; `customer-only` implies it isn't).
+  - `docs/TEMPLATES.md` §5 updated from "open question" to "resolved by design, not yet
+    implemented," pointing at the ARCHITECTURE.md section for the full design.
+- Verification: `python3 -m unittest discover -s tests` — 184/184 passing (3 PG-registry
+  tests skip, expected, doc-only change); `git diff --check` clean.
+- Not implemented — implementation follow-up (dimension-aware `ALLOWED_LABELS`,
+  `audience_coverage()` function, OpenCode prompt severity policy, regression tests,
+  TEMPLATES.md real-example updates) is listed in `docs/ARCHITECTURE.md`'s new section.
+  Not yet committed.
+
 ## Cross-reference correction in TEMPLATES.md (2026-09-11, later session)
 
 - Read this handoff's "Next steps"; the flagged stale cross-reference (asymmetric-audience-

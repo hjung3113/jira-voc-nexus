@@ -140,7 +140,8 @@ The exact allowlist and limits:
   `needs-triage` and `possible-duplicate` — unchanged from v1. Whether a
   third label dimension (e.g. distinguishing "engineering action only, no
   customer reply produced") is needed is an open question for the
-  companion taxonomy slice (GitHub issue #5), not decided here.
+  companion taxonomy slice (GitHub issue #4), not decided here. See "Label
+  taxonomy dimensions (design, GitHub issue #4)" below for the resolution.
 - When there is no evidence, the engine is not called, and
   `{"customer_reply": null, "engineering_action": null, "labels":
   ["needs-triage"]}` is produced — unchanged in spirit from v1.
@@ -272,6 +273,109 @@ address, assign, or notify anyone.
   "Proposal/model contract" section was already corrected from the stale v1
   `recommendations` shape to the actual v2 shape — both done as part of this
   same design-record change, not a remaining follow-up.
+
+## Label taxonomy dimensions (design, GitHub issue #4)
+
+**Design only, not yet implemented.** [GitHub issue
+#4](https://github.com/hjung3113/jira-voc-nexus/issues/4) is that
+`ALLOWED_LABELS` is exactly `{needs-triage, possible-duplicate}` — one
+dimension, no severity/component/root-cause/fix-type signal anywhere. This
+section records two decisions that unblock part of that gap without a
+breaking input-contract change; it explicitly leaves the rest open.
+
+### Decision: severity/component/root-cause values are in-runtime inferred, not producer-supplied
+
+The user decided (2026-09-11) that new taxonomy dimensions are populated by
+OpenCode's semantic judgment over retrieved evidence, not by extending the
+`Event`/corpus input contract. This keeps the v1/v2 event schema exactly as
+strict as it is today (`event_id/issue_key/project/summary/description/labels`,
+unknown fields rejected — [docs/TEMPLATES.md](TEMPLATES.md) §3) and avoids the
+breaking producer-contract change and versioning decision that issue #5
+requires. The trade-off, accepted knowingly: values depend on model judgment
+over evidence text, not a structured field a producer already tracked, so
+they inherit the same "safeguard for human review, not a factual guarantee"
+status as `customer_reply`/`engineering_action` text.
+
+This decision resolves the "producer-supplied vs. in-runtime" open question
+recorded in `docs/GAP_ANALYSIS.md` for the label-taxonomy half only —
+issue #3 (severity/impact/priority *scoring* used by retrieval/ranking) and
+issue #5 (input contract fields) are separate slices and remain undecided.
+
+### Decision: audience coverage is a computed dimension, not an LLM-judged label
+
+The "asymmetric audience-grounding" open question in
+[docs/TEMPLATES.md](TEMPLATES.md) §5 — what happens when only one of
+`customer_reply`/`engineering_action` is grounded — is resolved the same way
+recipient routing (issue #8) was resolved: as a pure function of the already-
+validated proposal, computed once in `nexus/proposals.py` and shared by both
+renderers and the public result, never asked of the model. No third
+`needs-triage`/`possible-duplicate` label is added; instead a new orthogonal
+`audience-coverage` dimension carries exactly one of:
+
+- `audience-coverage:customer-only` — `customer_reply` grounded, `engineering_action` null
+- `audience-coverage:engineering-only` — `engineering_action` grounded, `customer_reply` null
+- `audience-coverage:both` — both grounded
+- `audience-coverage:neither` — both null (always paired with `needs-triage`)
+
+`needs-triage`/`possible-duplicate` keep their current meaning and
+co-occurrence rules unchanged (see [docs/TEMPLATES.md](TEMPLATES.md) §5); the
+new dimension is additive, not a replacement.
+
+### Decision: severity is a bounded, omittable LLM-judged label
+
+A new `severity` dimension, values `severity:low`, `severity:medium`,
+`severity:high`, `severity:critical`. OpenCode's prompt instructs it to
+select at most one `severity:*` value only when the cited evidence text
+itself indicates a severity signal (data loss, outage, no workaround,
+security impact → high/critical; a documented workaround or cosmetic issue →
+low/medium), and to omit the dimension entirely — never guess a value — when
+the evidence gives no signal, the same null-not-invented doctrine already
+governing `customer_reply`/`engineering_action`. `validate_proposal` enforces
+this structurally: at most one `severity:*` value among `labels`, and only
+the four listed values are allowlisted; it cannot and does not check that the
+choice matches the evidence (semantic judgment stays a human-review
+safeguard, per the existing proposal-validation boundary).
+
+### Explicitly deferred, not designed here
+
+- **`component`** — needs a known, bounded component/project enum to
+  classify against. No such registry exists in `nexus/` or the `rag/`
+  toolkit's `IndexDocument` (see [docs/RAG_DESIGN.md](RAG_DESIGN.md)); adding
+  one is its own slice, not a label-format decision. Deferred until that
+  registry question is answered.
+- **`root-cause`** — depends on evidence-to-label linkage that issue #6
+  ("no evidence-to-label linkage in the RAG toolkit") has not yet designed;
+  inferring a root-cause category without that linkage would be an
+  ungrounded guess, which the null-not-invented doctrine above forbids.
+  Deferred until issue #6 is designed.
+- **`fix-type`** — the original gap's intent (distinguishing "needs a code
+  fix" from "needs a support reply") is already covered by the
+  `audience-coverage` dimension above (`engineering-only` implies a fix is
+  needed with no customer-facing reply produced; `customer-only` implies the
+  opposite). No separate `fix-type` dimension is added to avoid two labels
+  encoding the same signal.
+
+### Implementation follow-up (not done in this design-only session)
+
+- `nexus/proposals.py`: `ALLOWED_LABELS` becomes dimension-aware (a
+  `{"triage": {...}, "audience_coverage": {...}, "severity": {...}}`
+  structure or equivalent), with cardinality rules (`audience_coverage`
+  exactly one value, `severity` at most one) enforced in `validate_proposal`,
+  not left to convention. A new `audience_coverage(proposal) -> str` pure
+  function (parallel to `recipients()`) computes the value; `render_comment`/
+  `render_issue`'s `Labels:` line and `fixture_proposal` both need updating.
+- `nexus/opencode.py`: `_request_message`'s `instructions` gains the
+  `severity:*` selection/omission policy described above, next to the
+  existing audience/duplication policy from issue #11.
+- `tests/test_nexus.py`: cardinality-violation cases (two `severity:*`
+  values, two `audience_coverage:*` values, an `audience_coverage:*` value
+  computed by the engine rather than the renderer — must be rejected or
+  ignored per whichever cardinality rule lands), all four `audience-coverage`
+  cases at the public-result level, and severity omission-vs-selection cases.
+- [docs/TEMPLATES.md](TEMPLATES.md) §5: document the two new dimensions next
+  to the existing two-label description once implemented, with real-example
+  blocks synced to actual renderer output (same pattern as the v2 audience
+  split and issue #8 recipient routing before it).
 
 ## OpenCode boundary
 

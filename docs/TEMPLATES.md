@@ -354,18 +354,20 @@ factually correct or still current — see
 Both labels are proposal-time hints for human review, not automated
 dedupe/close decisions — the CLI never publishes or resolves anything.
 
-**Open question for the v2 slice, not decided here:** v2's `needs-triage`
+**Resolved by design (2026-09-11), not yet implemented:** v2's `needs-triage`
 meaning ("no grounded recommendation was produced") stops being a single
 yes/no once there are two audience fields — evidence might ground
-`engineering_action` but not `customer_reply`, or vice versa. Whether that
-asymmetric case needs a third label, a documented precedence rule for the
-existing two, or is left implicit (a human reading the rendered `null`
-section already sees which audience is ungrounded) is not settled by this
-document. Tracked under [GitHub issue #4](https://github.com/hjung3113/jira-voc-nexus/issues/4)
-("label taxonomy has no severity/component/root-cause/fix-type dimension") —
-confirmed correct on 2026-09-11 after a prior cross-reference here mistakenly
-pointed at issue #5, which is actually about the input event/corpus contract,
-not the label taxonomy.
+`engineering_action` but not `customer_reply`, or vice versa. Rather than a
+third `needs-triage`/`possible-duplicate` value or a precedence rule between
+the existing two, this asymmetric case is carried by a new, separate,
+**computed** `audience-coverage:*` dimension (`customer-only` /
+`engineering-only` / `both` / `neither`) — never judged by the model, the
+same way [recipient routing](ARCHITECTURE.md) is computed rather than
+model-chosen. See [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Label taxonomy
+dimensions (design, GitHub issue #4)" section for the full design, including
+a new in-runtime-inferred (not producer-supplied) `severity:*` dimension and
+why `component`/`root-cause`/a separate `fix-type` dimension are explicitly
+deferred.
 
 ## 6. Recipient routing (implemented)
 
