@@ -418,6 +418,31 @@ sync cadence. `add_relation` rejects an exact-duplicate relation with
 `RagInputError` on both backends (a `UNIQUE`/`PRIMARY KEY` violation is
 translated, not swallowed).
 
+### Local PostgreSQL conformance verification
+
+Install the existing `rag-pg` extra in the test Python environment, and set
+`NEXUS_RAG_PG_TEST_DATASOURCE` to an explicitly selected disposable test DB.
+Then run:
+
+```sh
+python3 -m unittest tests.test_rag_registry_pg -v
+```
+
+Each live test creates a uniquely named schema and restricts its registry
+connection's `search_path` to that schema. Cleanup closes the registry and
+drops only the test-owned schema; the test role needs permission to create
+schemas. Without the datasource, live tests skip. Use a disposable DB even
+with schema isolation; this is a test command, not an onboarding approval.
+
+On 2026-09-12 the coordinator exercised PostgreSQL 18.3 with psycopg 3.2.13
+and synthetic data in a private temporary instance with TCP disabled.
+Public registry checks covered duplicate/unknown-endpoint rejection followed
+by reuse, restricted graph traversal, and connection failure. A `pg_dump -Fc`
+backup restored with `pg_restore --exit-on-error` into a separate empty DB
+preserved `dump_payload()` and unrestricted/restricted `expand()` results.
+This is local PostgreSQL evidence only: company auth/ACL, OpenSearch, BGE,
+provider behavior, throughput and production recovery remain unverified.
+
 ## Smoke checklist (after any adapter swap)
 
 1. `python3 -m rag eval --fixtures-dir fixtures/rag --golden fixtures/rag/golden_set.json`

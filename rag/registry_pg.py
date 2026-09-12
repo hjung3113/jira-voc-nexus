@@ -1,15 +1,14 @@
-"""PostgreSQL adapter for the knowledge registry (real, integration-unverified here).
+"""PostgreSQL adapter for the knowledge registry.
 
 ``psycopg`` is imported lazily so importing this module -- or ``rag`` as a
 whole -- never requires it. Install the ``pg`` extra to use this adapter:
 
     pip install 'jira-voc-nexus[rag-pg]'
 
-No PostgreSQL instance is available in this environment. The unit tests for
-this module are skipped unless ``NEXUS_RAG_PG_TEST_DATASOURCE`` is set to a
-reachable Postgres connection string; until then this adapter's SQL has been
-reviewed against the SQLite implementation's semantics but not executed
-against a real server.
+Live conformance tests are opt-in via ``NEXUS_RAG_PG_TEST_DATASOURCE``.
+Local synthetic PostgreSQL verification and its limits are recorded in
+``guides/RAG_DEPLOYMENT.md``; it is not company integration or adoption
+evidence.
 """
 
 from __future__ import annotations

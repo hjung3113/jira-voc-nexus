@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+import uuid
 from unittest import mock
 
 from rag.errors import RagInputError
@@ -83,19 +84,71 @@ class LifecycleAndMirrorLeakTests(unittest.TestCase):
 @unittest.skipUnless(DATASOURCE, "set NEXUS_RAG_PG_TEST_DATASOURCE to run PG registry conformance tests")
 class PostgresRegistryConformanceTests(unittest.TestCase):
     def setUp(self):
-        from rag.contracts import KnowledgeEntity, KnowledgeRelation
-        from rag.registry_pg import PostgresKnowledgeRegistry
+        self._schema_name = f"nexus_rag_test_{uuid.uuid4().hex}"
+        self._control_conn = None
+        self.registry = None
 
-        self.KnowledgeEntity = KnowledgeEntity
-        self.KnowledgeRelation = KnowledgeRelation
-        self.registry = PostgresKnowledgeRegistry(datasource=DATASOURCE)
-        self.addCleanup(self._drop_tables)
+        try:
+            import psycopg
+            from psycopg import sql
+            from rag.contracts import KnowledgeEntity, KnowledgeRelation
+            from rag.registry_pg import PostgresKnowledgeRegistry
 
-    def _drop_tables(self):
-        with self.registry._conn.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS knowledge_relation")
-            cur.execute("DROP TABLE IF EXISTS knowledge_entity")
-        self.registry._conn.commit()
+            self.KnowledgeEntity = KnowledgeEntity
+            self.KnowledgeRelation = KnowledgeRelation
+
+            self._control_conn = psycopg.connect(DATASOURCE)
+            with self._control_conn.cursor() as cur:
+                cur.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(self._schema_name)))
+            self._control_conn.commit()
+
+            # The adapter creates its DDL during construction, so the schema
+            # must be selected as a connection option rather than afterward.
+            # Keep this search_path restricted to the owned schema: in
+            # particular, do not add PostgreSQL's public fallback.
+            quoted_schema = sql.Identifier(self._schema_name).as_string(self._control_conn)
+            self.registry = PostgresKnowledgeRegistry(
+                datasource=DATASOURCE,
+                options=f"-c search_path={quoted_schema}",
+            )
+            self.addCleanup(self._cleanup_pg)
+        except BaseException:
+            # Clean up resources acquired before setup failed.
+            self._cleanup_pg()
+            raise
+
+    def _cleanup_pg(self):
+        registry = self.registry
+        control_conn = self._control_conn
+        schema_name = self._schema_name
+        self.registry = None
+        self._control_conn = None
+
+        close_error = None
+        if registry is not None:
+            try:
+                registry.close()
+            except BaseException as exc:  # preserve cleanup of the schema/connection
+                close_error = exc
+
+        try:
+            if control_conn is not None:
+                from psycopg import sql
+
+                # A failed setup or a final SELECT can leave the control
+                # connection in a transaction; clear it before DROP SCHEMA.
+                control_conn.rollback()
+                with control_conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
+                    )
+                control_conn.commit()
+        finally:
+            if control_conn is not None:
+                control_conn.close()
+
+        if close_error is not None:
+            raise close_error
 
     def test_expand_matches_sqlite_hand_computed_expectation(self):
         entities = [
@@ -131,16 +184,56 @@ class PostgresRegistryConformanceTests(unittest.TestCase):
         self.assertEqual(len(neighbors), 1)
         self.assertEqual(neighbors[0].relation_type, "USES")
 
-    def test_duplicate_relation_rejected(self):
+    def test_rejected_relations_leave_registry_usable_for_valid_write_and_read(self):
         entities = [
             self.KnowledgeEntity(id="a", type="component", name="A", system="S", description=""),
             self.KnowledgeEntity(id="b", type="component", name="B", system="S", description=""),
+            self.KnowledgeEntity(id="c", type="component", name="C", system="S", description=""),
         ]
         for entity in entities:
             self.registry.upsert_entity(entity)
         self.registry.add_relation(self.KnowledgeRelation(source_id="a", relation_type="USES", target_id="b"))
         with self.assertRaises(RagInputError):
             self.registry.add_relation(self.KnowledgeRelation(source_id="a", relation_type="USES", target_id="b"))
+        with self.assertRaises(RagInputError):
+            self.registry.add_relation(self.KnowledgeRelation(source_id="b", relation_type="USES", target_id="missing"))
+
+        self.registry.add_relation(self.KnowledgeRelation(source_id="b", relation_type="USES", target_id="c"))
+        self.assertEqual(
+            self.registry.neighbors("b"),
+            [
+                self.KnowledgeRelation(source_id="a", relation_type="USES", target_id="b"),
+                self.KnowledgeRelation(source_id="b", relation_type="USES", target_id="c"),
+            ],
+        )
+
+    def test_allowed_entity_ids_exclude_hidden_bridge_from_neighbors_and_expand(self):
+        entities = [
+            self.KnowledgeEntity(id="source", type="component", name="Source", system="S", description=""),
+            self.KnowledgeEntity(id="bridge", type="component", name="HiddenBridge", system="S", description=""),
+            self.KnowledgeEntity(id="target", type="component", name="Target", system="S", description=""),
+            self.KnowledgeEntity(id="direct", type="component", name="Direct", system="S", description=""),
+        ]
+        for entity in entities:
+            self.registry.upsert_entity(entity)
+        self.registry.add_relation(
+            self.KnowledgeRelation(source_id="source", relation_type="USES", target_id="bridge")
+        )
+        self.registry.add_relation(
+            self.KnowledgeRelation(source_id="bridge", relation_type="USES", target_id="target")
+        )
+        self.registry.add_relation(
+            self.KnowledgeRelation(source_id="source", relation_type="USES", target_id="direct")
+        )
+
+        allowed = {"source", "target", "direct"}
+        self.assertEqual(
+            self.registry.neighbors("source", allowed_entity_ids=allowed),
+            [self.KnowledgeRelation(source_id="source", relation_type="USES", target_id="direct")],
+        )
+        expansion = self.registry.expand(["Source"], max_hops=2, allowed_entity_ids=allowed)
+        self.assertEqual(expansion.entity_ids, ("source", "direct"))
+        self.assertNotIn("target", expansion.entity_ids)
 
 
 if __name__ == "__main__":

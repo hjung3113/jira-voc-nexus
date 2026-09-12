@@ -1,5 +1,49 @@
 # Jira VOC Nexus handoff — 2026-09-12
 
+## Local PostgreSQL verification and test isolation completed (2026-09-12)
+
+- User clarified: do not invent work to fill the onboarding list; proceed only
+  when useful work is justified. Autonomous commits are authorized; no push
+  requested. The earlier preflight-first ordering below is no longer mandatory.
+- Chose to verify the existing PostgreSQL registry instead of adding a new
+  preflight tool. Used installed PostgreSQL 18.3 and a temporary Python 3.9
+  venv with psycopg/psycopg-binary 3.2.13. A new private temporary cluster used
+  Unix sockets with TCP disabled; no existing/company DB was contacted.
+- Reproduced a concrete defect: the old opt-in conformance tests passed while
+  deleting a pre-existing synthetic `public.knowledge_entity` table and emitting
+  unclosed-connection ResourceWarnings. Fixed the tests to create a unique
+  schema, use a schema-only search_path, close the registry, drop only their
+  schema and close the control connection, including partial setup failure.
+  Added rejection/reuse and restricted hidden-bridge graph regressions.
+- No adapter execution logic changed. Sonnet's proposed unknown-endpoint
+  transaction-poisoning scenario was disproved on the real local server:
+  Python-level RagInputError was followed by successful upsert/read on the same
+  connection. General SQL-failure recovery and idle-transaction behavior were
+  not redesigned; this is not a claim of exhaustive adapter hardening.
+- Coordinator verified connection failure, duplicate/unknown-endpoint rejection
+  and reuse, restricted neighbors/expansion, plus `pg_dump -Fc` and
+  `pg_restore --exit-on-error` into a separate empty DB. Restored dump_payload
+  and unrestricted/restricted expand results matched the original.
+- Final tests: default **212 run, 208 passed, 4 optional PG skips**; with the
+  temporary PG datasource **212 run, 212 passed, 0 skipped**. No ResourceWarning.
+  Pre-existing synthetic registry data survived repeated tests unchanged;
+  no test schemas remained after success or injected constructor failure.
+  Nexus fixture dry-run, five-variant detailed RAG eval, and diff check passed.
+- Orca Run `run_e6ccd25385fe`: Sonnet medium reviewed necessity/design under
+  Task `task_bd89e0aa292e` / Dispatch `ctx_8b98bfda49ff`; Luna Max implemented
+  the test-only fix under `task_436a7eebab80` / `ctx_ca4d4bd0a9d8`.
+  Coordinator reviewed the final diff and ran live verification. Both completion
+  reports were recovered/acknowledged and both owned worker tabs released.
+  The temporary PostgreSQL server was stopped after verification.
+- The deployment guide records the opt-in test command and evidence limits;
+  the adapter docstring no longer incorrectly says no local PG was available.
+  This is synthetic local PostgreSQL evidence only, not company auth/ACL,
+  OpenSearch, BGE, in-house-provider, performance or adoption validation.
+- **Next:** internal integration can start from this state. Additional external
+  preflight/installation/ACL tooling and OpenSearch drills are optional candidates,
+  not a mandatory backlog to manufacture. Pick another slice only for a concrete
+  need; Jira interface/principal decisions and real evaluation remain internal.
+
 ## Evaluation reporting completed locally (2026-09-12)
 
 - Completed the first external-onboarding preparation slice below. The next
@@ -931,10 +975,10 @@
 
 ## Next steps
 
-- **Current next-session priority:** evaluation reporting is complete locally;
-  continue with onboarding preflight automation, then local backend checks,
-  as scoped at the top of this file. These can proceed without company data; #10's
-  adoption gate below does not block those independent preparation slices.
+- **Current next-session priority:** see the top completion entry. Evaluation
+  reporting and local PostgreSQL checks are complete; further external work
+  needs a concrete justification, not automatic execution of the older list.
+  Internal integration can begin; #10's adoption gate remains unchanged.
 
 - **Issues #8 and #4 are now implemented, merged, and closed** (see their "implemented"
   entries above; PR #15 `ba19d0a` for #8, commit `5a6d7b3` for #4).
