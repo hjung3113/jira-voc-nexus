@@ -25,6 +25,7 @@ def _doc(doc_id, title, text, document_type, source_id=None):
         system="LogWarehouse",
         component="Parser",
         entity_ids=(),
+        labels=(),
         trust_level="supporting" if document_type.startswith("jira") else "canonical",
         source_id=source_id if source_id is not None else doc_id,
         updated_at="",

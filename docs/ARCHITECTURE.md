@@ -502,7 +502,7 @@ None — this is a design-only resolution declining a contract change, not a
 code change. `nexus/models.py`'s `Event`/`Document` and
 `docs/TEMPLATES.md` §3–4 are unchanged.
 
-## Evidence-to-label linkage (design, GitHub issue #6)
+## Evidence-to-label linkage (design, GitHub issue #6; decision (a) implemented 2026-09-12)
 
 [GitHub issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6)
 found that source-issue labels are ingested into `NormalizedIssue.metadata`
@@ -521,20 +521,26 @@ raw tags are not the same kind of thing, so this gap splits into one real,
 implementable fix and one idea that needed correcting, not two symmetric
 halves:
 
-### Decision (a): add `IndexDocument.labels`, implementable now
+### Decision (a): add `IndexDocument.labels` — implemented 2026-09-12
 
-Add `labels: Tuple[str, ...]` to `rag/contracts.py`'s `IndexDocument`,
+Added `labels: Tuple[str, ...]` to `rag/contracts.py`'s `IndexDocument`,
 following the exact pattern already used for `entity_ids` (`_string_tuple`
-parsing, empty tuple where a source has no label concept). `issue_to_documents`
-sources it from `issue.metadata.get("labels", [])`, the same way `component`/
-`system` are already read from `metadata`. `wiki_to_document` sets
-`labels=()` — a `WikiPage` has no label concept, the same precedent
-`project=""` established for issue #7. This is a pure projection-correctness
-fix inside the not-yet-adopted `rag/` POC toolkit: it does not touch
-`nexus/`, does not wire `rag/` into the nexus runtime, and does not require
-passing the evaluation gate — it fixes data that is already being computed
-and silently discarded, exactly like issue #7's `project` field fix. Safe to
-implement in its own slice without waiting on issue #10.
+parsing in `parse_index_document`, empty tuple where a source has no label
+concept). `issue_to_documents` sources it from
+`issue.metadata.get("labels", [])` (coerced to a tuple of strings,
+tolerantly like `system`/`component`), so `metadata.labels` now reaches
+both the `jira_problem` and `jira_resolution` documents projected from one
+issue. `wiki_to_document` sets `labels=()` — a `WikiPage` has no label
+concept, the same precedent `project=""` established for issue #7. Also
+updated for the new field: `rag/retrieval.py`'s OpenSearch mapping
+(`INDEX_SETTINGS`) and response-parsing field set
+(`_OPENSEARCH_SOURCE_FIELDS`), and `rag/__main__.py`'s local index
+JSON-serialization helper (tuple → list, same treatment as `entity_ids`).
+This was a pure projection-correctness fix inside the not-yet-adopted
+`rag/` POC toolkit: it did not touch `nexus/`, did not wire `rag/` into the
+nexus runtime, and did not require passing the evaluation gate — it fixes
+data that was already being computed and silently discarded, exactly like
+issue #7's `project` field fix.
 
 ### Decision (b), corrected 2026-09-12 after Grok 4.6 high review: not "grounding labels against evidence" — that mechanism was a vocabulary-mismatch error
 
@@ -575,13 +581,20 @@ label-validation mechanism.
 
 ### Implementation
 
-Not yet implemented. Decision (a) (`rag/contracts.py`'s `IndexDocument.labels`
-field, `issue_to_documents`/`wiki_to_document` wiring, a
-`guides/RAG_JIRA_INGESTION.md` note that `metadata.labels` now reaches the
-index document, and `tests/test_rag_*.py` coverage) is ready to implement as
-its own slice, independent of #10. Decision (b) is not an implementation
-item at all until issue #10 is designed and a concrete retrieval-signal use
-for `IndexDocument.labels` is chosen then.
+Decision (a) is implemented: `rag/contracts.py` (`IndexDocument.labels`,
+`parse_index_document`, `issue_to_documents`, `wiki_to_document`),
+`rag/retrieval.py` (`INDEX_SETTINGS` mapping, `_OPENSEARCH_SOURCE_FIELDS`),
+`rag/__main__.py` (`_document_to_payload` tuple→list serialization), and
+`tests/test_rag_contracts.py`/`tests/test_rag_retrieval.py`/
+`tests/test_rag_context.py`/`tests/test_rag_eval.py` (new coverage plus the
+existing `IndexDocument(...)` construction call sites updated for the new
+required field). Verified with `python3 -m rag index --fixtures-dir
+fixtures/rag --state <fresh state>`: `OPS-201:problem`/`OPS-201:resolution`
+both carry `"labels": ["parser", "reconnect"]` in the indexed output,
+matching `fixtures/rag/normalized_issues.json`'s source metadata.
+Decision (b) is not an implementation item at all until issue #10 is
+designed and a concrete retrieval-signal use for `IndexDocument.labels` is
+chosen then.
 
 ## OpenCode boundary
 

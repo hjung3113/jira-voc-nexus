@@ -231,12 +231,27 @@ class DocumentProjectionTests(unittest.TestCase):
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0].document_type, "jira_problem")
 
+    def test_issue_without_metadata_labels_yields_empty_labels(self):
+        issue = parse_normalized_issue(VALID_ISSUE)
+        docs = issue_to_documents(issue)
+        self.assertEqual(docs[0].labels, ())
+        self.assertEqual(docs[1].labels, ())
+
+    def test_metadata_labels_reach_both_projected_documents(self):
+        payload = json.loads(json.dumps(VALID_ISSUE))
+        payload["metadata"]["labels"] = ["parser", "reconnect"]
+        issue = parse_normalized_issue(payload)
+        docs = issue_to_documents(issue)
+        self.assertEqual(docs[0].labels, ("parser", "reconnect"))
+        self.assertEqual(docs[1].labels, ("parser", "reconnect"))
+
     def test_issue_to_documents_round_trips_through_parse_index_document(self):
         for payload in load_fixture("normalized_issues.json"):
             issue = parse_normalized_issue(payload)
             for doc in issue_to_documents(issue):
                 doc_payload = dataclasses.asdict(doc)
                 doc_payload["entity_ids"] = list(doc.entity_ids)
+                doc_payload["labels"] = list(doc.labels)
                 round_tripped = parse_index_document(doc_payload)
                 self.assertEqual(round_tripped, doc)
 
@@ -250,6 +265,7 @@ class DocumentProjectionTests(unittest.TestCase):
             self.assertEqual(doc.document_type, expected_document_type)
             self.assertEqual(doc.doc_id, f"wiki:{page.page_id}")
             self.assertEqual(doc.project, "")
+            self.assertEqual(doc.labels, ())
 
 
 if __name__ == "__main__":

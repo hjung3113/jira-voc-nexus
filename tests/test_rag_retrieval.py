@@ -37,7 +37,7 @@ def load_fixture(name):
         return json.load(stream)
 
 
-def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", project="", system="", component="", source_id=None, entity_ids=()):
+def _doc(doc_id, title, text, document_type="jira_problem", trust_level="supporting", project="", system="", component="", source_id=None, entity_ids=(), labels=()):
     return IndexDocument(
         doc_id=doc_id,
         source_type="jira",
@@ -46,6 +46,7 @@ def _doc(doc_id, title, text, document_type="jira_problem", trust_level="support
         system=system,
         component=component,
         entity_ids=entity_ids,
+        labels=labels,
         trust_level=trust_level,
         source_id=source_id if source_id is not None else doc_id,
         updated_at="",
@@ -207,6 +208,7 @@ class OpenSearchBackendTests(unittest.TestCase):
                     "system": doc.system,
                     "component": doc.component,
                     "entity_ids": list(doc.entity_ids),
+                    "labels": list(doc.labels),
                     "trust_level": doc.trust_level,
                     "source_id": doc.source_id,
                     "updated_at": doc.updated_at,
@@ -242,6 +244,7 @@ class OpenSearchBackendTests(unittest.TestCase):
                     "system": doc.system,
                     "component": doc.component,
                     "entity_ids": list(doc.entity_ids),
+                    "labels": list(doc.labels),
                     "trust_level": doc.trust_level,
                     "source_id": doc.source_id,
                     "updated_at": doc.updated_at,

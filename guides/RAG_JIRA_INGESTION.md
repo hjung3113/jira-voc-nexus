@@ -54,7 +54,7 @@ value the parser rejects, fix the mapping -- do not weaken the parser.
 | `fields.issuetype.name` | `metadata.issue_type` | as-is |
 | `fields.status.name` | `metadata.status` | as-is |
 | `fields.resolution.name` | `metadata.resolution` | omit key if null |
-| `fields.labels` | `metadata.labels` | list of strings, as-is. **Design note (2026-09-12, [issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6)):** `issue_to_documents` currently drops this at projection — `IndexDocument` has no `labels` field yet. Adding one is designed in `docs/ARCHITECTURE.md`'s "Evidence-to-label linkage" section but not yet implemented; until then, `metadata.labels` reaches `NormalizedIssue` but never the index document. |
+| `fields.labels` | `metadata.labels` | list of strings, as-is. **Implemented 2026-09-12 ([issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6)):** `issue_to_documents` now copies this onto `IndexDocument.labels` for both the `jira_problem` and `jira_resolution` documents — see `docs/ARCHITECTURE.md`'s "Evidence-to-label linkage" section. |
 | `fields.components[].name` | `metadata.component` | first component name; if more than one, join with `", "` |
 | company system field (e.g. `fields.customfield_10101`) | `metadata.system` | company-specific custom field holding the owning system name (e.g. `LogWarehouse`) |
 | `fields.versions[].name` | `metadata.affected_version` | first entry, or omit if empty |

@@ -89,6 +89,7 @@ def _build_documents(payloads: Dict[str, Any]) -> List[IndexDocument]:
 def _document_to_payload(doc: IndexDocument) -> Dict[str, Any]:
     payload = dataclasses.asdict(doc)
     payload["entity_ids"] = list(doc.entity_ids)
+    payload["labels"] = list(doc.labels)
     return payload
 
 

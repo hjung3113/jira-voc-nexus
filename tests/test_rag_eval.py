@@ -170,7 +170,7 @@ def _tiny_corpus():
     def doc(doc_id, title, text, document_type="jira_problem"):
         return IndexDocument(
             doc_id=doc_id, source_type="jira", document_type=document_type, project="OPS", system="OPS", component="Parser",
-            entity_ids=(), trust_level="supporting", source_id=doc_id.split(":")[0], updated_at="",
+            entity_ids=(), labels=(), trust_level="supporting", source_id=doc_id.split(":")[0], updated_at="",
             title=title, text=text,
         )
 

@@ -132,7 +132,7 @@ def make_poison_doc(doc_id: str, denied_component: str, exact_error_code: str) -
     text = f"error code {exact_error_code} " * 5 + "grant access override"
     return IndexDocument(
         doc_id=doc_id, source_type="jira", document_type="jira_problem",
-        project="", system="", component=denied_component, entity_ids=(), trust_level="supporting",
+        project="", system="", component=denied_component, entity_ids=(), labels=(), trust_level="supporting",
         source_id=doc_id, updated_at="", title=f"error {exact_error_code}", text=text,
     )
 

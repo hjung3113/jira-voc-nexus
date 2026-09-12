@@ -1,5 +1,51 @@
 # Jira VOC Nexus handoff — 2026-09-11
 
+## Issue #6 decision (a) implemented: `IndexDocument.labels` (2026-09-12)
+
+- Implemented the `rag/`-side projection fix designed and Grok-corrected in the prior
+  entries below. Small, well-scoped, file-disjoint change — made directly per this
+  project's "small adjustments can be made directly" rule, no Orca worker dispatched.
+- Change (`rag/contracts.py`): added `labels: Tuple[str, ...]` to `IndexDocument`
+  (`_INDEX_DOCUMENT_FIELDS`, the dataclass, `parse_index_document` via `_string_tuple`,
+  same pattern as `entity_ids`). `issue_to_documents` sources it from
+  `issue.metadata.get("labels", [])` (coerced to a string tuple, tolerant like
+  `system`/`component`) and applies it to both the `jira_problem` and `jira_resolution`
+  documents projected from one issue. `wiki_to_document` sets `labels=()` (no label
+  concept, same precedent as issue #7's `project=""`).
+- Propagated the new required field everywhere an `IndexDocument` is built or its shape is
+  assumed, found by running the full suite and fixing each failure rather than
+  guessing every call site up front: `rag/retrieval.py` (`INDEX_SETTINGS`'s OpenSearch
+  mapping, `_OPENSEARCH_SOURCE_FIELDS` response-parsing field set — a real functional
+  path, not just a dataclass constructor), `rag/__main__.py` (`_document_to_payload`'s
+  tuple→list JSON serialization, same treatment as `entity_ids`), and every
+  `IndexDocument(...)` test-helper construction in `tests/test_rag_context.py`,
+  `tests/test_rag_eval.py`, `tests/test_rag_retrieval.py` (three helpers plus two inline
+  OpenSearch-response-payload builders).
+- Added regression coverage in `tests/test_rag_contracts.py`:
+  `test_issue_without_metadata_labels_yields_empty_labels`,
+  `test_metadata_labels_reach_both_projected_documents` (asserts the same
+  `metadata.labels` reaches both projected documents), and a `labels == ()` assertion
+  added to the existing wiki-document-type-mapping test. Also fixed two more stale
+  `entity_ids`-only field lists discovered while grepping for call sites:
+  `guides/RAG_ACL.md`'s poison-doc example (`labels=()` added) and
+  `guides/RAG_DEPLOYMENT.md`'s bulk-index guide, which was missing **both** `project`
+  (stale since issue #7, never caught until now) and the new `labels` from its
+  `_OPENSEARCH_SOURCE_FIELDS` list and code sample.
+- Doc updates: `docs/ARCHITECTURE.md`'s "Evidence-to-label linkage" section header and
+  decision (a) marked implemented with the actual file list and CLI verification note;
+  `docs/RAG_DESIGN.md`'s field-list note and `guides/RAG_JIRA_INGESTION.md`'s mapping-row
+  note updated from "design target, not yet implemented" to implemented.
+- Verification: `python3 -m unittest discover -s tests` — **189/189 passing** (3
+  PG-registry tests skip, expected); `git diff --check` clean; real fixture-CLI run
+  (`python3 -m rag index --fixtures-dir fixtures/rag --state <fresh state>`) confirms
+  `OPS-201:problem`/`OPS-201:resolution` both carry `"labels": ["parser", "reconnect"]`
+  in the indexed JSON output, matching `fixtures/rag/normalized_issues.json`'s source
+  metadata end to end.
+- Fixture-only verification; no real OpenSearch/PostgreSQL backend exercised (the
+  `INDEX_SETTINGS`/`_OPENSEARCH_SOURCE_FIELDS` changes are code-reviewed and unit-tested
+  via `_parse_opensearch_response`, not run against a live OpenSearch cluster).
+- Not yet committed.
+
 ## Grok 4.6 high review of the #5/#6 design commit, and a correction (2026-09-12)
 
 - User asked for a Grok 4.6 high design review of commit `4f60e4e` (the #5/#6 design entry
@@ -713,19 +759,18 @@
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
   #6, #10 all need a design decision first...~~
-- **Issue #3 is resolved by design and closed** (commit `a466e99`). **Issues #5 and #6 are
-  now designed** (see the entry above) but not yet committed, implemented, or closed on
-  GitHub. **Start here next session**:
-  1. Commit the #5/#6 design doc changes, then decide with the user whether to close #5/#6
-     now (like #2/#3) or after #6 decision (a) below is implemented.
-  2. Implement #6 decision (a): add `IndexDocument.labels` in `rag/contracts.py`
-     (`issue_to_documents`/`wiki_to_document` wiring, `tests/test_rag_*.py` coverage). This
-     is ready now, file-disjoint from everything else, no adoption-gate conflict.
+- **Issue #3 is resolved by design and closed** (commit `a466e99`). **Issue #6 decision (a)
+  (`IndexDocument.labels`) is implemented** (see the entry above) but not yet committed.
+  **Start here next session**:
+  1. Commit the #6(a) implementation changes (see the entry above's file list).
+  2. Decide with the user whether to close #5 and #6 on GitHub now (like #2/#3) — #5 needs
+     no further code, #6's decision (a) is done and decision (b) is intentionally
+     not-yet-designed future work, not a blocker to closing the issue.
   3. Issue #10 (nexus↔rag wiring) remains excluded/blocked by `docs/RAG_DESIGN.md`'s
      no-pre-eval-gate-adoption non-goal — it needs an explicit gate/adoption decision from
-     the user before any design or coding, not just a coding slice. #6 decision (b)
-     (grounding labels against evidence in `nexus/proposals.py`) is deferred to whenever
-     #10 is decided.
+     the user before any design or coding, not just a coding slice. #6 decision (b)'s
+     corrected framing (a not-yet-designed retrieval-signal idea, not label validation) is
+     deferred to whenever #10 is decided.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2

@@ -268,9 +268,12 @@ set in `INDEX_SETTINGS`).
 `documents=` corpus you constructed the backend with, using the standard
 `opensearchpy.helpers.bulk` helper directly against a client, keyed on the
 same `_OPENSEARCH_SOURCE_FIELDS` the response parser requires
-(`doc_id`, `source_type`, `document_type`, `system`, `component`,
-`entity_ids`, `trust_level`, `source_id`, `updated_at`, `title`, `text`,
-plus `embedding`):
+(`doc_id`, `source_type`, `document_type`, `project`, `system`, `component`,
+`entity_ids`, `labels`, `trust_level`, `source_id`, `updated_at`, `title`,
+`text`, plus `embedding`; **note (2026-09-12): this list previously omitted
+`project`, added for [issue #7](https://github.com/hjung3113/jira-voc-nexus/issues/7),
+and `labels`, added for [issue #6](https://github.com/hjung3113/jira-voc-nexus/issues/6)
+— both are now real required `IndexDocument` fields**):
 
 ```python
 from opensearchpy import OpenSearch
@@ -284,8 +287,10 @@ def bulk_index(client: OpenSearch, index_name: str, documents, embedder) -> None
             "_id": doc.doc_id,
             "_source": {
                 "doc_id": doc.doc_id, "source_type": doc.source_type,
-                "document_type": doc.document_type, "system": doc.system,
+                "document_type": doc.document_type, "project": doc.project,
+                "system": doc.system,
                 "component": doc.component, "entity_ids": list(doc.entity_ids),
+                "labels": list(doc.labels),
                 "trust_level": doc.trust_level, "source_id": doc.source_id,
                 "updated_at": doc.updated_at, "title": doc.title, "text": doc.text,
                 "embedding": vector,

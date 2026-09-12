@@ -311,6 +311,7 @@ _INDEX_DOCUMENT_FIELDS = {
     "system",
     "component",
     "entity_ids",
+    "labels",
     "trust_level",
     "source_id",
     "updated_at",
@@ -328,6 +329,7 @@ class IndexDocument:
     system: str
     component: str
     entity_ids: Tuple[str, ...]
+    labels: Tuple[str, ...]
     trust_level: str
     source_id: str
     updated_at: str
@@ -346,6 +348,7 @@ def parse_index_document(payload: Any) -> IndexDocument:
         system=_string(data["system"], "system", allow_empty=True, limit=500),
         component=_string(data["component"], "component", allow_empty=True, limit=500),
         entity_ids=_string_tuple(data["entity_ids"], "entity_ids", item_limit=500),
+        labels=_string_tuple(data["labels"], "labels", item_limit=500),
         trust_level=_enum(data["trust_level"], "trust_level", TRUST_LEVELS),
         source_id=_string(data["source_id"], "source_id", limit=500),
         updated_at=_iso8601(data["updated_at"], "updated_at"),
@@ -371,6 +374,8 @@ def issue_to_documents(issue: NormalizedIssue) -> List[IndexDocument]:
     system = str(issue.metadata.get("system", "") or "")
     component = str(issue.metadata.get("component", "") or "")
     updated_at = str(issue.metadata.get("updated_at", "") or "")
+    raw_labels = issue.metadata.get("labels", [])
+    labels = tuple(str(item) for item in raw_labels) if isinstance(raw_labels, list) else ()
 
     problem_text = normalize_text(
         " ".join(
@@ -388,6 +393,7 @@ def issue_to_documents(issue: NormalizedIssue) -> List[IndexDocument]:
             system=system,
             component=component,
             entity_ids=(),
+            labels=labels,
             trust_level="supporting",
             source_id=issue.issue_key,
             updated_at=updated_at,
@@ -413,6 +419,7 @@ def issue_to_documents(issue: NormalizedIssue) -> List[IndexDocument]:
                 system=system,
                 component=component,
                 entity_ids=(),
+                labels=labels,
                 trust_level=issue.trust_level(),
                 source_id=issue.issue_key,
                 updated_at=updated_at,
@@ -433,6 +440,7 @@ def wiki_to_document(page: WikiPage) -> IndexDocument:
         system=page.system,
         component=page.component,
         entity_ids=page.related_entities,
+        labels=(),
         trust_level=page.trust_level(),
         source_id=page.page_id,
         updated_at="",
