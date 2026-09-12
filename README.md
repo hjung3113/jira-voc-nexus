@@ -54,6 +54,10 @@ successful Jira connection.
 See [architecture](docs/ARCHITECTURE.md) for the proposal schema, allowed
 labels, and size limits, and [operational integration contract](docs/INTEGRATION.md)
 for the conditions to meet before connecting an in-house provider/Jira.
+For a company-internal preparation path that does not require exporting data,
+use the [onboarding guide](guides/COMPANY_ONBOARDING.md) and copy its
+[checklist](guides/COMPANY_ONBOARDING_CHECKLIST.md) into an internal record
+system.
 
 ## Comment output example (comment format v1)
 

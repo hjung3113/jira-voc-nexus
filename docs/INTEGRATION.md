@@ -5,6 +5,12 @@ is a local execution boundary that reads files; it is not a webhook server or
 internet ingress. A webhook server, real-time queue, real RAG, Jira write, and
 feedback indexing are not yet connected.
 
+For the ordered internal onboarding procedure, role owners, evidence records,
+and phase gates, start with [Company onboarding](../guides/COMPANY_ONBOARDING.md)
+and its [checklist](../guides/COMPANY_ONBOARDING_CHECKLIST.md). Company data and
+completed evidence records stay inside the company; external data transfer is
+not a prerequisite for onboarding or evaluation.
+
 No Jira connector, Promptfoo, or framework dependency is currently installed.
 `atlassian-python-api==5.0.4` is a future read-only adapter candidate to
 reconsider once real ACL/auth and Jira server flavor are secured, and
@@ -56,9 +62,9 @@ lexical grounding.
 
 A `recipients` field derived from which audience fields are non-null
 (`user-support` for `customer_reply`, `dev-team` for `engineering_action`) is
-designed in [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Recipient routing"
+implemented as described in [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s "Recipient routing"
 section for [GitHub issue #8](https://github.com/hjung3113/jira-voc-nexus/issues/8),
-but not yet implemented — it is never model output, only a deterministic
+and exposed in the local result and renderers — it is never model output, only a deterministic
 function of the already-validated proposal, and a real adapter would still
 need its own assignee/component/queue mapping on top of it (not designed
 here).

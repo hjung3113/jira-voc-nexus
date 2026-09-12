@@ -1,5 +1,93 @@
 # Jira VOC Nexus handoff — 2026-09-12
 
+## Publication checkpoint and remaining scope (2026-09-12)
+
+- User authorized committing and pushing the ranking calibration and onboarding
+  documentation, including the seven existing local commits. Refreshed origin;
+  no upstream-only commits. Pre-publication full suite: 192 run, 189 passed,
+  3 optional PostgreSQL skips; `git diff --check` clean.
+- Remaining work is not configuration alone: the real Jira read/ingest adapter,
+  trusted authentication/principal and ACL wiring, evaluated Nexus/RAG integration,
+  and any future Jira write/reconciliation adapter still require implementation.
+  Real data, authorization, provider and backend evidence must be collected internally.
+- Synthetic adapter/failure tests can still be developed outside the company once
+  non-sensitive interface requirements are settled. Do not invent Jira flavor/auth
+  details or bypass the evaluation gate to pre-build the integration. The next useful
+  input is an internal decision on Jira flavor, permission model, execution environment,
+  and first pilot scope; no company payload or credential export is needed.
+- Earlier "uncommitted/unpushed" entries are historical pre-publication records;
+  use live Git state for publication status.
+
+## Internal onboarding guide and checklist (2026-09-12)
+
+- User confirmed company data cannot be provided externally. Onboarding and
+  evaluation therefore run inside company-controlled systems; neither raw nor
+  sanitized data, configuration, identities, logs, embeddings, judgments, or
+  completed evidence records are requested here. Even aggregate sharing needs
+  separate company-policy permission. This clarifies the prior entry's request
+  for evaluation data: it is an internal prerequisite, not an export request.
+- Added [COMPANY_ONBOARDING.md](guides/COMPANY_ONBOARDING.md) and
+  [COMPANY_ONBOARDING_CHECKLIST.md](guides/COMPANY_ONBOARDING_CHECKLIST.md):
+  ordered phases, available vs missing adapters, role owners, evidence and
+  pass/hold criteria, internal record template, tested fresh-state fixture
+  commands, dependency/CA/egress/secrets preparation, ACL deletion/revocation,
+  representative evaluation, provider failures, recovery, and separate write gate.
+- Jira read-only preparation and standalone provider synthetic tests can run
+  independently after fixture and endpoint/data controls. Retrieval evaluation
+  needs the approved corpus/ACL and its selected retrieval adapters, not OpenCode
+  provider validation. Combined Nexus/RAG/LLM adoption needs both sets of evidence.
+  The >=100-query and zero-leakage criteria remain documented adoption gates,
+  not claims that the local eval command automatically enforces them.
+- Linked the pack from README, docs/INDEX, and docs/INTEGRATION; corrected the
+  integration document's stale claim that recipients were not implemented.
+  No runtime change or installation in this documentation slice.
+- Orca Luna Max Run `run_6104d348e25d`, Task `task_b1d3fba0ba07`, Dispatch
+  `ctx_640b38a3ff56` completed and released. Coordinator reviewed the new files,
+  corrected the final phase-dependency wording, and verified 61 local links and
+  fragments, the documented shell smoke verbatim, `scripts/doctor.py`, and
+  `git diff --check`. Full suite: **192 run, 189 passed, 3 optional PostgreSQL
+  skips**, no failures. No live Jira/provider/cluster/ACL evidence was obtained.
+- All earlier uncommitted ranking work is preserved. No commit/push. Next internal
+  decisions are Jira flavor/auth/visibility, named owners, approved execution and
+  package source, and first target (read-only evaluation or provider proposals).
+  The user need not share sensitive values to proceed with this checklist.
+
+## Same-project ranking follow-up completed locally (2026-09-12)
+
+- Resolved the cross-project ranking regression recorded in the issue #7 entry
+  below. `rag/retrieval.py` now defaults `BoostConfig.same_project` to `0.0001`
+  instead of `0.5`; other boosts, ACL ordering, and the nexus runtime are unchanged.
+- Luna Max implemented through Orca Run `run_05210faafb46`, Task
+  `task_a8dc12ff2394` / Dispatch `ctx_0e7259c66aef`; coordinator review corrections
+  used the same session under Task `task_843bd29ee4db` / Dispatch
+  `ctx_a8b75f4fc562`. Both completion reports were recovered, and the final
+  dispatch released the owned agent terminal successfully.
+- Added three behavior regressions: a true fused-score tie preserves a positive
+  same-project preference; a stronger cross-project match remains first; all
+  11 fixture queries retain expected metrics across five variants, with a real
+  temporary SQLite fixture registry enabled for the expansion variant.
+- The 14-value synthetic sweep and before/after metrics are recorded in
+  [RAG_SAME_PROJECT_CALIBRATION.md](docs/RAG_SAME_PROJECT_CALIBRATION.md).
+  Architecture, evaluation guide, and the ACL guide's default-value reference
+  are updated. The existing golden set is byte-for-byte unchanged.
+- Coordinator final verification: `python3 -m unittest discover -s tests -v`
+  ran **192 tests: 189 passed, 3 skipped** (optional PostgreSQL tests), no failures.
+  Nexus fixture CLI passed with `audience_coverage=both` and both recipients.
+  RAG eval CLI passed: all five variants have recall@5/10 and MRR@10 = 1.000;
+  nDCG@10 = 1.000 for BM25/vector/hybrid, 0.989 for both rerank variants.
+  Before calibration, vector/hybrid recall@5 was 0.909. `git diff --check` passed.
+- Local synthetic/fake-search/SQLite evidence only; no live Jira, provider,
+  OpenSearch, BGE, or PostgreSQL verification. No installation was needed.
+  Changes remain uncommitted/unpushed; the pre-existing seven local commits
+  were preserved.
+- **Next:** #10 remains deferred under the existing evaluation/adoption gate.
+  The user authorized autonomous local work and Orca workers/installations, but
+  has not changed that gate. Real evaluation needs a permitted sanitized corpus,
+  expert relevance judgments (at least 100 queries), and trusted ACL test scope
+  per `guides/RAG_EVALUATION.md` / `guides/RAG_ACL.md`. Synthetic calibration
+  does not authorize runtime adoption. Historical pending statements below are
+  superseded by this entry for the ranking follow-up only.
+
 ## Issue #6 decision (a) implemented: `IndexDocument.labels` (2026-09-12)
 
 - Implemented the `rag/`-side projection fix designed and Grok-corrected in the prior

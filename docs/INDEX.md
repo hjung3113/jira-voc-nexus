@@ -8,6 +8,8 @@
 - [RAG evaluation gate](../guides/RAG_EVALUATION.md): golden-set construction, metrics, comparison variants, and the proposed-not-adopted gate
 - [RAG company ingestion/registry/ACL guides](../guides/RAG_JIRA_INGESTION.md): source normalization, exact relation seeding, and ACL-before-search contracts
 - [RAG operations runbook](../guides/RAG_OPERATIONS.md): backup/restore, reindex/rollback, monitoring signals, and fail-closed operational rules
+- [Company-internal onboarding guide](../guides/COMPANY_ONBOARDING.md): ordered preparation, fixture smoke, internal Jira/evaluation/provider gates, and future adoption/write boundaries
+- [Company-internal onboarding checklist](../guides/COMPANY_ONBOARDING_CHECKLIST.md): copyable role-owned phase checklist and internal evidence fields
 - [Design review](REVIEW.md): Grok design findings and the adopted resolutions
 - [Development environment and verification](DEVELOPMENT.md): install scope and what each verification command means
 - [Tooling comparison and adoption](TOOLING_DECISION.md): open-source candidates and why the lightweight configuration was chosen

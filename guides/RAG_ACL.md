@@ -54,7 +54,7 @@ when wiring a custom pipeline or a real backend:
    search path) must call `apply_acl` on the result before returning it.
 3. **The client-supplied `project` field is never an authorization basis.**
    `RetrievalQuery.project` only ever feeds the `same_project` *relevance
-   boost* (`+0.5` by default) in `RetrievalPipeline._apply_boosts` -- it is
+   boost* (`+0.0001` by default) in `RetrievalPipeline._apply_boosts` -- it is
    soft ranking signal, not a filter, and a client can set it to anything.
    Authorization comes only from the trusted principal your server
    resolves and passes into the `PreRetrievalAcl` implementation.

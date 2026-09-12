@@ -55,6 +55,34 @@ def _doc(doc_id, title, text, document_type="jira_problem", trust_level="support
     )
 
 
+class _PreserveScoreOrderReranker:
+    """Test seam that preserves the post-boost order for ranking assertions."""
+
+    def rerank(self, query, docs, top_k):
+        return list(docs[: max(0, top_k)])
+
+
+class _FixedRankIndex:
+    """Small synthetic SearchIndex for controlling an RRF tie in a test."""
+
+    def __init__(self, documents, ordered_ids):
+        self._documents = tuple(documents)
+        self._ordered_ids = tuple(ordered_ids)
+        self._by_id = {doc.doc_id: doc for doc in documents}
+
+    @property
+    def documents(self):
+        return self._documents
+
+    def search(self, query, top_k, allowed_doc_ids=None):
+        allowed = set(self._by_id) if allowed_doc_ids is None else set(allowed_doc_ids)
+        return [
+            ScoredDoc(doc_id, 1.0, self._by_id[doc_id], ("synthetic",))
+            for doc_id in self._ordered_ids[: max(0, top_k)]
+            if doc_id in allowed
+        ]
+
+
 class TokenizeTests(unittest.TestCase):
     def test_deterministic(self):
         text = "Parser error 4107 파서가 로그 파일을 읽습니다"
@@ -287,6 +315,67 @@ class RrfFuseTests(unittest.TestCase):
 
 
 class BoostTests(unittest.TestCase):
+    def test_same_project_tie_preference_uses_public_retrieve_seam(self):
+        # Equal synthetic channel ranks produce equal fused RRF scores, and
+        # the pre-boost doc_id tiebreak is cross-project. The
+        # positive default should prefer the same-project document while still
+        # returning the cross-project candidate (soft preference, not filter).
+        cross_project = _doc(
+            "a-cross", "parser timeout", "parser timeout observed", project="PAY"
+        )
+        same_project = _doc(
+            "z-same", "parser timeout", "parser timeout observed", project="OPS"
+        )
+        docs = [cross_project, same_project]
+        pipeline = RetrievalPipeline(
+            # Invert the two equal synthetic channel rankings so RRF scores
+            # tie exactly; the pre-boost doc_id tiebreak is cross-project.
+            lexical=_FixedRankIndex(docs, ["z-same", "a-cross"]),
+            vector=_FixedRankIndex(docs, ["a-cross", "z-same"]),
+            reranker=_PreserveScoreOrderReranker(),
+            config=RetrievalConfig(final_top_k=2),
+        )
+
+        result = pipeline.retrieve(
+            RetrievalQuery(text="parser timeout", project="OPS"), top_k=2
+        )
+
+        self.assertEqual(result.fused[0].score, result.fused[1].score)
+        self.assertEqual([item.doc_id for item in result.final], ["z-same", "a-cross"])
+        self.assertIn("boost:same-project", result.final[0].reasons)
+
+    def test_strong_cross_project_match_stays_ahead_through_public_retrieve_seam(self):
+        # The strong match wins both retrieval channels. The calibrated boost
+        # may break a close tie, but must not override this relevance lead
+        # merely because the distractor shares the query project.
+        strong_cross_project = _doc(
+            "a-cross",
+            "parser error 4107",
+            "parser error 4107 exact outage remediation and verification",
+            project="PAY",
+        )
+        same_project_distractor = _doc(
+            "z-same",
+            "parser issue",
+            "parser issue observed in logs",
+            project="OPS",
+        )
+        docs = [strong_cross_project, same_project_distractor]
+        pipeline = RetrievalPipeline(
+            lexical=LexicalIndex(docs),
+            vector=VectorIndex(docs, HashingEmbedding()),
+            reranker=_PreserveScoreOrderReranker(),
+            config=RetrievalConfig(final_top_k=2),
+        )
+
+        result = pipeline.retrieve(
+            RetrievalQuery(text="parser error 4107", project="OPS"), top_k=2
+        )
+
+        self.assertEqual(result.final[0].doc_id, "a-cross")
+        self.assertEqual({item.doc_id for item in result.final}, {"a-cross", "z-same"})
+        self.assertIn("boost:same-project", result.final[1].reasons)
+
     def test_same_project_boost_uses_project_not_system(self):
         same_system_different_project = _doc(
             "same-system",

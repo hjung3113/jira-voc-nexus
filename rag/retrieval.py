@@ -873,7 +873,10 @@ class BoostConfig:
     component: float = 1.5
     version_family: float = 1.0
     verified_outcome: float = 1.0
-    same_project: float = 0.5
+    # Local calibration covers the committed fixture and synthetic cases only.
+    # Keep this as a positive tie preference; arbitrary corpora require a
+    # fresh evaluation, so this is not a universal cross-project guarantee.
+    same_project: float = 0.0001
 
 
 @dataclass(frozen=True)

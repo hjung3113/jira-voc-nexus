@@ -155,6 +155,22 @@ between rows are purely in what each variant's `RetrievalPipeline` wiring
 does with those same indexes, so the comparison isolates each component's
 marginal contribution.
 
+## Same-project boost calibration (local fixture only)
+
+The local toolkit keeps `RetrievalQuery.project` as a soft preference, never
+as authorization or a hard project filter. `BoostConfig.same_project` defaults
+to `+0.0001`, a small positive preference calibrated against the committed
+fixture's full 11-query set and two synthetic `RetrievalPipeline.retrieve`
+cases (an equal fused RRF-score tie and a strong cross-project match). The
+full sweep, before/after five-variant metrics, and bounded local-only evidence
+are in
+[docs/RAG_SAME_PROJECT_CALIBRATION.md](../docs/RAG_SAME_PROJECT_CALIBRATION.md).
+
+These are synthetic local-harness results only. The fixture has 11 queries,
+is not a real adoption golden set, and cannot establish production relevance,
+latency, ACL leakage, OpenSearch/BGE/PostgreSQL behavior, or a production
+default; the adoption gate in `docs/RAG_DESIGN.md` remains unchanged.
+
 To evaluate a real adapter swap (per
 [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md)), build your own
 `PipelineVariant` list with the swapped component substituted for one
@@ -169,11 +185,11 @@ swap rather than to golden-set noise.
 ```
 | variant | recall@5 | recall@10 | mrr@10 | ndcg@10 | latency_ms_p50 | latency_ms_p95 |
 | --- | --- | --- | --- | --- | --- | --- |
-| bm25-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.07 | 0.25 |
-| vector-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.24 | 0.26 |
-| hybrid | 1.000 | 1.000 | 1.000 | 1.000 | 0.29 | 0.33 |
+| bm25-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.07 | 0.27 |
+| vector-only | 1.000 | 1.000 | 1.000 | 1.000 | 0.23 | 0.26 |
+| hybrid | 1.000 | 1.000 | 1.000 | 1.000 | 0.28 | 0.30 |
 | hybrid+rerank | 1.000 | 1.000 | 1.000 | 0.989 | 1.26 | 1.33 |
-| hybrid+rerank+expansion | 1.000 | 1.000 | 1.000 | 0.989 | 1.28 | 1.37 |
+| hybrid+rerank+expansion | 1.000 | 1.000 | 1.000 | 0.989 | 1.30 | 1.42 |
 ```
 
 (actual output on this repo's `fixtures/rag/golden_set.json`, 11 queries --

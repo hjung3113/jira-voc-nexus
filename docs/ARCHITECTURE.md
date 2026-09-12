@@ -52,6 +52,24 @@ production ACL enforcement, real-provider quality, OpenSearch/PostgreSQL
 integration, or adoption. Adoption remains gated by the real, sanitized
 golden-set and ACL-leakage evidence in [RAG_DESIGN.md](RAG_DESIGN.md).
 
+### Same-project ranking calibration (2026-09-12)
+
+`RetrievalQuery.project` remains a soft ranking signal in the local RAG
+toolkit; it is not an authorization basis or a hard project filter. The
+default `BoostConfig.same_project` is calibrated to `+0.0001`, a small
+positive tie preference applied after ACL/document-type filtering and RRF.
+All other boost magnitudes and the ACL enforcement order are unchanged.
+
+The value was selected by sweeping the existing 11-query fixture golden set
+and two synthetic public-`retrieve` seam cases: an equal-relevance
+same-project tie and a strong cross-project match. Values through `+0.00025`
+preserved all five variants' relevance metrics; `+0.0005` already reduced
+BM25/vector MRR and nDCG, while `+0.001` moved the cross-project golden
+relevant document out of rank 1 in the no-rerank BM25/vector/hybrid paths. The
+complete sweep, full before/after five-variant metrics, and synthetic-only
+limitations are recorded in
+[docs/RAG_SAME_PROJECT_CALIBRATION.md](RAG_SAME_PROJECT_CALIBRATION.md).
+
 ## Decisions
 
 ### Static code owns the flow

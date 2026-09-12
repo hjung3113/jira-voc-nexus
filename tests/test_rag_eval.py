@@ -12,6 +12,7 @@ from pathlib import Path
 
 from rag.contracts import IndexDocument
 from rag.errors import RagInputError
+from rag.registry import SqliteKnowledgeRegistry
 from rag.eval import (
     GoldenEntry,
     PipelineVariant,
@@ -305,6 +306,51 @@ class RunEvaluationTests(unittest.TestCase):
         variants = {v.name: v for v in default_local_variants(documents, "")}
         report = run_evaluation([variants["hybrid+rerank"]], golden)
         self.assertGreaterEqual(report["hybrid+rerank"]["recall@5"], 0.5)
+
+    def test_calibrated_default_preserves_all_fixture_relevance_metrics(self):
+        # This evaluates every committed golden query through the public
+        # evaluation/retrieval seam. Latency is intentionally not asserted:
+        # this test protects ranking behavior, not machine-load timing.
+        from rag.contracts import issue_to_documents, parse_normalized_issue, parse_wiki_page, wiki_to_document
+
+        fixtures_dir = ROOT / "fixtures" / "rag"
+        with (fixtures_dir / "normalized_issues.json").open(encoding="utf-8") as stream:
+            issues = [parse_normalized_issue(item) for item in json.load(stream)]
+        with (fixtures_dir / "wiki_pages.json").open(encoding="utf-8") as stream:
+            pages = [parse_wiki_page(item) for item in json.load(stream)]
+
+        documents = []
+        for issue in issues:
+            documents.extend(issue_to_documents(issue))
+        for page in pages:
+            documents.append(wiki_to_document(page))
+
+        golden = load_golden_set(str(fixtures_dir / "golden_set.json"))
+        with (fixtures_dir / "registry.json").open(encoding="utf-8") as stream:
+            registry_payload = json.load(stream)
+        registry_tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(registry_tmp_dir.cleanup)
+        registry_path = str(Path(registry_tmp_dir.name) / "registry.db")
+        # Seed exactly as the CLI does, then close the seeding connection
+        # before evaluation opens its own expansion-variant connection.
+        seed_registry = SqliteKnowledgeRegistry.from_payload(
+            registry_path, registry_payload["entities"], registry_payload["relations"]
+        )
+        seed_registry.close()
+        report = run_evaluation(default_local_variants(documents, registry_path), golden)
+        expected = {
+            "bm25-only": (1.0, 1.0, 1.0, 1.0),
+            "vector-only": (1.0, 1.0, 1.0, 1.0),
+            "hybrid": (1.0, 1.0, 1.0, 1.0),
+            "hybrid+rerank": (1.0, 1.0, 1.0, 0.989),
+            "hybrid+rerank+expansion": (1.0, 1.0, 1.0, 0.989),
+        }
+        for name, (recall5, recall10, mrr10, ndcg10) in expected.items():
+            with self.subTest(variant=name):
+                self.assertAlmostEqual(report[name]["recall@5"], recall5, places=3)
+                self.assertAlmostEqual(report[name]["recall@10"], recall10, places=3)
+                self.assertAlmostEqual(report[name]["mrr@10"], mrr10, places=3)
+                self.assertAlmostEqual(report[name]["ndcg@10"], ndcg10, places=3)
 
 
 class RenderMarkdownTableTests(unittest.TestCase):
