@@ -1,4 +1,4 @@
-# Jira VOC Nexus handoff — 2026-09-11
+# Jira VOC Nexus handoff — 2026-09-12
 
 ## Issue #6 decision (a) implemented: `IndexDocument.labels` (2026-09-12)
 
