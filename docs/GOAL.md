@@ -1,8 +1,12 @@
-# Current goal — 2026-09-10
+# Original scaffold goal — 2026-09-10
 
-Request: review the overview and autonomously assemble a lightweight
+This is the original scaffold acceptance record, not the current task list.
+For current status and remaining work, start at the latest entry in
+[HANDOFF.md](../HANDOFF.md).
+
+Original request: review the overview and autonomously assemble a lightweight
 harness/skills/rules, completing scaffolding, verification, record-keeping,
-and commit/push. The same goal is registered with the Codex goal feature.
+and commit/push.
 
 | Completion condition | How to verify |
 | --- | --- |

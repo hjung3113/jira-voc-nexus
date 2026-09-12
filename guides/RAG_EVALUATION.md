@@ -329,7 +329,7 @@ for production, gather and record:
 None of the above is satisfied by a single run of `python3 -m rag eval`
 against `fixtures/rag/golden_set.json` -- that command exists to smoke-test
 the harness itself (see
-[guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md#local-first-run)), not to
+[guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md#local-first-run-verify-before-touching-any-adapter)), not to
 produce adoption evidence.
 
 ## Recording results

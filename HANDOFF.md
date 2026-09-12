@@ -1,5 +1,42 @@
 # Jira VOC Nexus handoff — 2026-09-12
 
+## Documentation navigation and usability audit (2026-09-12)
+
+- User requested README/guides/agent-environment and document-to-code navigation
+  improvements, followed by commit and push. This supersedes the earlier
+  no-push note. The two existing local commits (`5371b6e`, `e715e76`) are included
+  in this publication scope. Preserve the historical entries below as evidence,
+  not an ordered backlog; the newest entry governs current continuation.
+- Corrected the README's stale v1 example against fresh v2 fixture output and
+  separated the independent Nexus and RAG paths. Fresh-state commands avoid
+  replaying an old example. Development guidance separates stdlib execution,
+  optional adapter dependencies, agent tools, and the production in-house model.
+- Expanded the index into task routes with document/code/test navigation and
+  direct entries for every guide. AGENTS points to that map. Original goals and
+  pre-v2 gap research are explicitly historical; development Z.AI routing no
+  longer appears as a production-provider choice in tooling guidance.
+- Fixed two broken deployment-section links and a smoke-check instruction that
+  implied local eval reports contain ACL telemetry or exercise swapped adapters.
+  Actual adapter ACL checks remain separate from the five local eval variants.
+- Orca Run `run_ad475970bbbb`: Luna Max owns the four entry/navigation documents
+  (`task_94ca51b0127b`, `ctx_e087463a783b`); Sonnet medium independently audited
+  guide/renderer/integration consistency (`task_568e3f5fd06c`, `ctx_4196a695a565`).
+  Coordinator verified findings and handled bounded guide/history corrections.
+- Final coordinator verification: **212 tests run, 208 passed, 4 optional PG
+  skips**; doctor passed; 279 local document links/fragments passed and all
+  21 other docs/guides are directly indexed. Executed the exact README
+  quickstart and onboarding smoke block; v2 comment matched byte-for-byte,
+  OPS-201 context and all five eval rows were present. `git diff --check`
+  passed. Real company provider/Jira/OpenSearch/BGE and live PostgreSQL were
+  not rerun in this documentation-only slice; earlier local PG evidence below
+  remains separate. Both worker completions were recovered/acknowledged and
+  their owned tabs released. Coordinator finalized clickable code/test links
+  and shell-copyable quickstart details after reviewing the worker changes.
+- No runtime behavior, dependencies, shell configuration, or production
+  integration was added. Internal integration remains the next meaningful step
+  when company interface/principal/provider decisions are available; no external
+  feature backlog is implied by this documentation pass.
+
 ## Local PostgreSQL verification and test isolation completed (2026-09-12)
 
 - User clarified: do not invent work to fill the onboarding list; proceed only

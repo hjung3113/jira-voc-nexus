@@ -18,7 +18,7 @@ runbook's regression checks compare against.
 ## Prerequisites
 
 - The local toolkit already verified per
-  [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md#local-first-run) (index /
+  [guides/RAG_DEPLOYMENT.md](RAG_DEPLOYMENT.md#local-first-run-verify-before-touching-any-adapter) (index /
   query / eval all pass on fixtures) before any of this applies to a real
   deployment.
 - Whatever real adapters you have wired in (`OpenSearchBackend`,

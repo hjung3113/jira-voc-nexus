@@ -446,10 +446,11 @@ provider behavior, throughput and production recovery remain unverified.
 ## Smoke checklist (after any adapter swap)
 
 1. `python3 -m rag eval --fixtures-dir fixtures/rag --golden fixtures/rag/golden_set.json`
-   still exits 0 and every variant row still has `acl_filtered_count`-style
-   ACL enforcement intact (see [guides/RAG_ACL.md](RAG_ACL.md)'s
-   poison-document recipe -- run it against the swapped adapter, not just
-   the local one).
+   still exits 0 with all five local baseline variants. This CLI uses local
+   components and its report contains no ACL telemetry; it does not verify
+   the swapped adapter. Separately run [guides/RAG_ACL.md](RAG_ACL.md)'s
+   poison-document recipe against that adapter and inspect its
+   `RetrievalResult` for forbidden IDs and ACL filtering behavior.
 2. Confirm no secret value appears in `.local/rag/state.json`, CLI stdout,
    or any log line -- only environment variable *names* should ever appear.
 3. Confirm `python3 -m unittest discover -s tests -v` is still green (the

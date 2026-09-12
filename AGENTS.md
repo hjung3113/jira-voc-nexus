@@ -7,6 +7,16 @@
 3. Preserve existing user changes. Commit, push, deploy, and real Jira writes happen only within the explicitly stated task scope.
 4. `CLAUDE.md` is a relative symlink to this file. Do not create a separate copy of the rules.
 
+## Navigation
+
+- [README](README.md): Python-only fixture quickstart and the separate `nexus`/`rag` boundaries.
+- [Documentation index](docs/INDEX.md): task routes, current-versus-historical authority, and the doc-to-code-to-test map.
+- [Project overview](docs/PROJECT_OVERVIEW.md): product direction versus the current local scaffold.
+- [Architecture](docs/ARCHITECTURE.md): execution and proposal/RAG contracts.
+- [Development](docs/DEVELOPMENT.md): setup, optional adapter extras, agent-tool separation, provider boundary, and verification.
+- [Company onboarding](guides/COMPANY_ONBOARDING.md): internal-only preparation and adoption/write gates.
+- [HANDOFF](HANDOFF.md): live status; use its latest top entry and verify the checkout before relying on older records.
+
 ## Implementation principles
 
 - Before building a new base tool/harness yourself, research the actual code, license, dependencies, and integration fit of reusable open source first. Do not force a conclusion that favors a baseline you've already built.

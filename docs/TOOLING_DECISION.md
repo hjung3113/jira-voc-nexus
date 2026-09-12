@@ -38,10 +38,12 @@ no evidence, the OpenCode process is not even started, and `needs-triage` is
 returned. Exactly one OpenCode process runs per new event with evidence, and
 semantic rerank is never added as a separate process.
 
-The production provider/model is never put in the repository. The current
-preference, for when a real in-house model is connected, is Z.AI's
-`zai/glm-5.3`; the OpenRouter path is not used. No claim of provider success
-or Jira operational connectivity is made before the endpoint, credential, and
+Production uses one explicitly approved in-house provider/model configured
+outside this repository; none is selected by this tooling decision. Z.AI's
+`zai/glm-5.3` is a **development-worker preference** under [AGENTS.md](../AGENTS.md),
+using the connected Z.AI path rather than OpenRouter. It is not the production
+provider or a fallback for company VOC data. No claim of provider success or
+Jira operational connectivity is made before the endpoint, credential, and
 ACL principal are secured.
 
 ## Priorities

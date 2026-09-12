@@ -1,7 +1,11 @@
 # Gap analysis: auto-recommendation, auto-labeling, and dual-audience action items
 
-Status: draft research synthesis, not adopted. This document does not change runtime
-behavior; it compiles four parallel research passes into one ranked gap list to inform
+Status: historical pre-v2 research synthesis, not adopted. Some findings below
+were subsequently resolved, including dual-audience output and recipient routing.
+Use [TEMPLATES.md](TEMPLATES.md) for the current v2 contract and the latest
+[HANDOFF.md](../HANDOFF.md) entry for remaining work; this is not an active backlog.
+
+This document does not change runtime behavior; it compiles four parallel research passes into one ranked gap list to inform
 future slice prioritization. See [ARCHITECTURE.md](ARCHITECTURE.md), [RAG_DESIGN.md](RAG_DESIGN.md),
 [INTEGRATION.md](INTEGRATION.md), and [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) for the
 current adopted contracts this analysis is checked against.
