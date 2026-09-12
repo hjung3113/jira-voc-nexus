@@ -44,7 +44,12 @@
 - Fixture-only verification; no real OpenSearch/PostgreSQL backend exercised (the
   `INDEX_SETTINGS`/`_OPENSEARCH_SOURCE_FIELDS` changes are code-reviewed and unit-tested
   via `_parse_opensearch_response`, not run against a live OpenSearch cluster).
-- Not yet committed.
+- Committed as `85b0267` on `main` (not pushed). User confirmed closing both issues, same
+  pattern as #2/#3: closed [GitHub issue
+  #5](https://github.com/hjung3113/jira-voc-nexus/issues/5) and [GitHub issue
+  #6](https://github.com/hjung3113/jira-voc-nexus/issues/6) with summary comments
+  (decision/implementation record, and for #6 the Grok-corrected framing of what's still
+  deferred to issue #10).
 
 ## Grok 4.6 high review of the #5/#6 design commit, and a correction (2026-09-12)
 
@@ -759,18 +764,14 @@
   `docs/ARCHITECTURE.md`/`docs/TEMPLATES.md`/`docs/INTEGRATION.md`... but not implemented.~~
   ~~**Start here next session**: no gap issue is currently implementation-ready. #3, #4, #5,
   #6, #10 all need a design decision first...~~
-- **Issue #3 is resolved by design and closed** (commit `a466e99`). **Issue #6 decision (a)
-  (`IndexDocument.labels`) is implemented** (see the entry above) but not yet committed.
-  **Start here next session**:
-  1. Commit the #6(a) implementation changes (see the entry above's file list).
-  2. Decide with the user whether to close #5 and #6 on GitHub now (like #2/#3) — #5 needs
-     no further code, #6's decision (a) is done and decision (b) is intentionally
-     not-yet-designed future work, not a blocker to closing the issue.
-  3. Issue #10 (nexus↔rag wiring) remains excluded/blocked by `docs/RAG_DESIGN.md`'s
-     no-pre-eval-gate-adoption non-goal — it needs an explicit gate/adoption decision from
-     the user before any design or coding, not just a coding slice. #6 decision (b)'s
-     corrected framing (a not-yet-designed retrieval-signal idea, not label validation) is
-     deferred to whenever #10 is decided.
+- **Issues #3, #5, and #6 are all resolved and closed** (commits `a466e99`, `85b0267`; see
+  their entries above). **Start here next session**: the only remaining open gap issue is
+  **#10** (nexus↔rag wiring), which is blocked by `docs/RAG_DESIGN.md`'s
+  no-pre-eval-gate-adoption non-goal — it needs an explicit gate/adoption decision from the
+  user before any design or coding, not just a coding slice. #6 decision (b)'s corrected
+  framing (a not-yet-designed retrieval-signal idea comparing `Event.labels` against
+  `IndexDocument.labels`, not label validation — see the Grok-review entry above) is
+  recorded as future work for whenever #10 is taken up.
 - Real Jira/provider connection is a separate slice after the ACL/auth/server
   contracts in [docs/INTEGRATION.md](docs/INTEGRATION.md) are met (tracked loosely by
   issue #10 above but not blocked on it). The write lifecycle will consume the v2
