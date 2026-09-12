@@ -31,6 +31,7 @@ from .retrieval import (
 
 _QUERY_FIELDS = {"text", "project", "component", "error_codes", "entities", "document_types"}
 _ENTRY_FIELDS = {"query", "relevant_doc_ids"}
+_OPTIONAL_ENTRY_FIELDS = {"language"}
 
 
 def _require_object(value: Any, field: str) -> Dict[str, Any]:
@@ -71,13 +72,18 @@ def _parse_query(payload: Any, field: str) -> RetrievalQuery:
 class GoldenEntry:
     query: RetrievalQuery
     relevant_doc_ids: Tuple[str, ...]
+    # Optional provenance metadata. Absent stays explicitly "unknown";
+    # subset metrics never silently assume a language.
+    language: str = "unknown"
 
 
 def load_golden_set(path: str) -> List[GoldenEntry]:
-    """Strict JSON loader: a list of ``{"query": {...}, "relevant_doc_ids": [...]}``
-    entries. ``query`` must carry exactly the six ``RetrievalQuery`` fields
-    (empty string/list for unused ones); ``relevant_doc_ids`` must be a
-    non-empty list of strings referencing real index doc ids."""
+    """Strict JSON loader: a list of ``{"query": {...}, "relevant_doc_ids": [...],
+    "language": "ko"}`` entries. ``query`` must carry exactly the six
+    ``RetrievalQuery`` fields (empty string/list for unused ones);
+    ``relevant_doc_ids`` must be a non-empty list of strings referencing real
+    index doc ids. ``language`` is optional provenance metadata: a non-blank
+    string when present, explicitly ``"unknown"`` when absent (never guessed)."""
 
     with open(path, encoding="utf-8") as stream:
         payload = json.load(stream)
@@ -87,12 +93,15 @@ def load_golden_set(path: str) -> List[GoldenEntry]:
     for index, item in enumerate(payload):
         field = f"golden_set[{index}]"
         data = _require_object(item, field)
-        if set(data) != _ENTRY_FIELDS:
+        if not _ENTRY_FIELDS <= set(data) or set(data) - _ENTRY_FIELDS - _OPTIONAL_ENTRY_FIELDS:
             raise RagInputError(f"{field} has missing or unknown fields")
         query = _parse_query(data["query"], f"{field}.query")
         relevant = _require_string_list(data["relevant_doc_ids"], f"{field}.relevant_doc_ids")
         _validate_relevant_ids(relevant, field)
-        entries.append(GoldenEntry(query=query, relevant_doc_ids=relevant))
+        language = data.get("language", "unknown")
+        if not isinstance(language, str) or not language.strip():
+            raise RagInputError(f"{field}.language must be a non-blank string when present")
+        entries.append(GoldenEntry(query=query, relevant_doc_ids=relevant, language=language.strip()))
     return entries
 
 
@@ -169,6 +178,69 @@ class PipelineVariant:
     cleanup: Optional[Callable[[Any], None]] = None
 
 
+def _validate_evaluation_inputs(
+    variants: Sequence[PipelineVariant], golden: Sequence[GoldenEntry], ks: Tuple[int, ...]
+) -> int:
+    """Shared input validation for both report paths; returns the retrieval
+    depth (``max(10, *ks)``, so ``mrr@10``/``ndcg@10`` always have top-10
+    input regardless of ``ks``)."""
+
+    if not golden or not variants:
+        raise RagInputError("evaluation requires non-empty golden entries and variants")
+    if not ks or any(type(k) is not int or k <= 0 for k in ks) or len(set(ks)) != len(ks):
+        raise RagInputError("evaluation cutoffs must be unique positive integers")
+    names = [variant.name for variant in variants]
+    if any(not isinstance(name, str) or not name.strip() for name in names) or len(set(names)) != len(names):
+        raise RagInputError("evaluation variant names must be unique and non-blank")
+    return max(10, *ks)
+
+
+def _check_golden_against_corpus(pipeline: Any, golden: Sequence[GoldenEntry]) -> Dict[str, IndexDocument]:
+    corpus = {doc.doc_id: doc for doc in pipeline.documents}
+    if len(corpus) != len(pipeline.documents):
+        raise RagInputError("evaluation corpus contains duplicate document IDs")
+    for entry in golden:
+        _validate_relevant_ids(entry.relevant_doc_ids, "golden entry")
+        if not isinstance(entry.query.text, str) or not entry.query.text.strip():
+            raise RagInputError("golden query text must not be blank")
+        if not isinstance(entry.language, str) or not entry.language.strip():
+            raise RagInputError("golden entry language must be a non-blank string")
+        for doc_id in entry.relevant_doc_ids:
+            if doc_id not in corpus:
+                raise RagInputError("golden relevance ID is absent from the evaluation corpus")
+            if entry.query.document_types and corpus[doc_id].document_type not in entry.query.document_types:
+                raise RagInputError("golden relevance ID is excluded by query document_types")
+    return corpus
+
+
+def _run_queries(pipeline: Any, golden: Sequence[GoldenEntry], ks: Tuple[int, ...], depth: int) -> Dict[str, Any]:
+    """The single internal evaluation core: validates the golden set against
+    the variant's corpus, then runs ``pipeline.retrieve`` exactly once per
+    golden query, recording ranked IDs, wall-clock latency, and per-query
+    metrics from that one run. Both public report paths consume this; neither
+    re-runs retrieval."""
+
+    corpus = _check_golden_against_corpus(pipeline, golden)
+    runs: List[Dict[str, Any]] = []
+    for query_index, entry in enumerate(golden):
+        start = time.perf_counter()
+        result = pipeline.retrieve(entry.query, top_k=depth)
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        ranked_ids = [sd.doc_id for sd in result.final]
+        if len(set(ranked_ids)) != len(ranked_ids):
+            raise RagInputError("evaluation pipeline returned duplicate document IDs")
+        if any(doc_id not in corpus for doc_id in ranked_ids):
+            raise RagInputError("evaluation pipeline returned an unknown document ID")
+        runs.append({
+            "query_index": query_index,
+            "entry": entry,
+            "ranked_ids": ranked_ids,
+            "latency_ms": latency_ms,
+            "metrics": _query_metrics(ranked_ids, entry.relevant_doc_ids, ks),
+        })
+    return {"corpus": corpus, "runs": runs}
+
+
 def run_evaluation(
     variants: Sequence[PipelineVariant], golden: Sequence[GoldenEntry], ks: Tuple[int, ...] = (5, 10)
 ) -> Dict[str, Any]:
@@ -178,56 +250,18 @@ def run_evaluation(
     over ``time.perf_counter()`` timings of each ``pipeline.retrieve()`` call
     (percentile = sorted_latencies[round(pct * (n-1))])."""
 
-    if not golden or not variants:
-        raise RagInputError("evaluation requires non-empty golden entries and variants")
-    if not ks or any(type(k) is not int or k <= 0 for k in ks) or len(set(ks)) != len(ks):
-        raise RagInputError("evaluation cutoffs must be unique positive integers")
-    names = [variant.name for variant in variants]
-    if any(not isinstance(name, str) or not name.strip() for name in names) or len(set(names)) != len(names):
-        raise RagInputError("evaluation variant names must be unique and non-blank")
-    depth = max(10, *ks)
+    depth = _validate_evaluation_inputs(variants, golden, ks)
     report: Dict[str, Any] = {}
     for variant in variants:
         pipeline = variant.build()
         try:
-            corpus = {doc.doc_id: doc for doc in pipeline.documents}
-            if len(corpus) != len(pipeline.documents):
-                raise RagInputError("evaluation corpus contains duplicate document IDs")
-            for entry in golden:
-                _validate_relevant_ids(entry.relevant_doc_ids, "golden entry")
-                if not isinstance(entry.query.text, str) or not entry.query.text.strip():
-                    raise RagInputError("golden query text must not be blank")
-                for doc_id in entry.relevant_doc_ids:
-                    if doc_id not in corpus:
-                        raise RagInputError("golden relevance ID is absent from the evaluation corpus")
-                    if entry.query.document_types and corpus[doc_id].document_type not in entry.query.document_types:
-                        raise RagInputError("golden relevance ID is excluded by query document_types")
-            n = len(golden)
-            recall_sums = {k: 0.0 for k in ks}
-            mrr_sum = 0.0
-            ndcg_sum = 0.0
-            latencies_ms: List[float] = []
-
-            for entry in golden:
-                start = time.perf_counter()
-                result = pipeline.retrieve(entry.query, top_k=depth)
-                latencies_ms.append((time.perf_counter() - start) * 1000.0)
-                ranked_ids = [sd.doc_id for sd in result.final]
-                if len(set(ranked_ids)) != len(ranked_ids):
-                    raise RagInputError("evaluation pipeline returned duplicate document IDs")
-                if any(doc_id not in corpus for doc_id in ranked_ids):
-                    raise RagInputError("evaluation pipeline returned an unknown document ID")
-                for k in ks:
-                    recall_sums[k] += recall_at_k(ranked_ids, entry.relevant_doc_ids, k)
-                mrr_sum += mrr_at_k(ranked_ids, entry.relevant_doc_ids, k=10)
-                ndcg_sum += ndcg_at_k(ranked_ids, entry.relevant_doc_ids, k=10)
-
-            sorted_latencies = sorted(latencies_ms)
+            outcome = _run_queries(pipeline, golden, ks, depth)
+            runs = outcome["runs"]
+            n = len(runs)
+            sorted_latencies = sorted(run["latency_ms"] for run in runs)
             metrics: Dict[str, float] = {}
-            for k in ks:
-                metrics[f"recall@{k}"] = recall_sums[k] / n if n else 0.0
-            metrics["mrr@10"] = mrr_sum / n if n else 0.0
-            metrics["ndcg@10"] = ndcg_sum / n if n else 0.0
+            for key in _metric_keys(ks):
+                metrics[key] = sum(run["metrics"][key] for run in runs) / n if n else 0.0
             metrics["latency_ms_p50"] = _percentile(sorted_latencies, 0.5)
             metrics["latency_ms_p95"] = _percentile(sorted_latencies, 0.95)
             report[variant.name] = metrics
@@ -235,6 +269,104 @@ def run_evaluation(
             if variant.cleanup is not None:
                 variant.cleanup(pipeline)
 
+    return report
+
+
+def _query_metrics(ranked_ids: Sequence[str], relevant: Sequence[str], ks: Tuple[int, ...]) -> Dict[str, float]:
+    metrics: Dict[str, float] = {}
+    for k in ks:
+        metrics[f"recall@{k}"] = recall_at_k(ranked_ids, relevant, k)
+    metrics["mrr@10"] = mrr_at_k(ranked_ids, relevant, k=10)
+    metrics["ndcg@10"] = ndcg_at_k(ranked_ids, relevant, k=10)
+    return metrics
+
+
+def _metric_keys(ks: Tuple[int, ...]) -> Tuple[str, ...]:
+    return tuple(_query_metrics((), (), ks))
+
+
+def _is_cross_project(entry: GoldenEntry, corpus: Dict[str, IndexDocument]) -> bool:
+    """A query is cross-project only when its own project is known and at
+    least one relevant document has a known, different project. Documents
+    with an empty project field have unknown provenance and are never
+    asserted to be cross-project."""
+    if not entry.query.project:
+        return False
+    return any(
+        corpus[doc_id].project and corpus[doc_id].project != entry.query.project
+        for doc_id in entry.relevant_doc_ids
+    )
+
+
+def _subset_metrics(rows: List[Dict[str, float]], ks: Tuple[int, ...]) -> Dict[str, Any]:
+    if not rows:
+        return {"count": 0, **{key: None for key in _metric_keys(ks)}}
+    subset: Dict[str, Any] = {"count": len(rows)}
+    for key in _metric_keys(ks):
+        subset[key] = sum(row[key] for row in rows) / len(rows)
+    return subset
+
+
+def run_detailed_evaluation(
+    variants: Sequence[PipelineVariant], golden: Sequence[GoldenEntry], ks: Tuple[int, ...] = (5, 10)
+) -> Dict[str, Any]:
+    """Opt-in detailed report over the same retrieval runs as
+    ``run_evaluation`` (shared validation, one ``retrieve`` call per query,
+    shared cleanup): per-variant aggregate metrics plus language /
+    error-code / cross-project subset counts and metrics, and per-query
+    ``query_index``/``relevant_doc_ids``/ranked IDs/missing-relevant-IDs by
+    cutoff/metrics. Latency is intentionally excluded so the report is
+    deterministic; any failure raises before a (partial) report is
+    returned."""
+
+    depth = _validate_evaluation_inputs(variants, golden, ks)
+    report: Dict[str, Any] = {}
+    for variant in variants:
+        pipeline = variant.build()
+        try:
+            outcome = _run_queries(pipeline, golden, ks, depth)
+            corpus, runs = outcome["corpus"], outcome["runs"]
+            rows: List[Dict[str, float]] = []
+            language_rows: Dict[str, List[Dict[str, float]]] = {}
+            error_code_rows: List[Dict[str, float]] = []
+            cross_project_rows: List[Dict[str, float]] = []
+            queries: List[Dict[str, Any]] = []
+            for run in runs:
+                entry, metrics, ranked_ids = run["entry"], run["metrics"], run["ranked_ids"]
+                language = entry.language.strip()
+                rows.append(metrics)
+                language_rows.setdefault(language, []).append(metrics)
+                if entry.query.error_codes:
+                    error_code_rows.append(metrics)
+                if _is_cross_project(entry, corpus):
+                    cross_project_rows.append(metrics)
+                queries.append({
+                    "query_index": run["query_index"],
+                    "text": entry.query.text,
+                    "language": language,
+                    "project": entry.query.project,
+                    "relevant_doc_ids": list(entry.relevant_doc_ids),
+                    "ranked_doc_ids": ranked_ids,
+                    "missing_relevant_doc_ids_by_cutoff": {
+                        str(k): [
+                            doc_id for doc_id in entry.relevant_doc_ids if doc_id not in ranked_ids[:k]
+                        ]
+                        for k in sorted(set(ks) | {10})
+                    },
+                    **metrics,
+                })
+            report[variant.name] = {
+                "aggregate": _subset_metrics(rows, ks),
+                "subsets": {
+                    "language": {name: _subset_metrics(vals, ks) for name, vals in language_rows.items()},
+                    "error_code": _subset_metrics(error_code_rows, ks),
+                    "cross_project": _subset_metrics(cross_project_rows, ks),
+                },
+                "queries": queries,
+            }
+        finally:
+            if variant.cleanup is not None:
+                variant.cleanup(pipeline)
     return report
 
 

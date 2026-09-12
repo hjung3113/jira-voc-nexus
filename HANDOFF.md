@@ -1,5 +1,90 @@
 # Jira VOC Nexus handoff — 2026-09-12
 
+## Evaluation reporting completed locally (2026-09-12)
+
+- Completed the first external-onboarding preparation slice below. The next
+  bounded slice is **onboarding preflight automation**, reusing
+  `scripts/doctor.py`; local OpenSearch/PostgreSQL verification remains after it.
+- Extended the existing evaluator with a shared validation/retrieval core and
+  opt-in `python3 -m rag eval --fixtures-dir fixtures/rag --golden
+  fixtures/rag/golden_set.json --report detailed`. Default aggregate JSON/table
+  and its six metric keys (including latency) remain compatible.
+- Detailed JSON contains aggregate and language/error-code/cross-project
+  subset counts/metrics, query indices, relevant/ranked IDs, and missing IDs at
+  every recall cutoff plus 10. Optional language metadata is validated and
+  trimmed; absent metadata stays `unknown`. Empty subsets have count zero and
+  null metrics. Cross-project membership uses known query/document projects,
+  never authorization. The committed golden fixture remains unchanged.
+- Each variant retrieves once per query. Detailed reports omit timing for
+  deterministic local output; the legacy report retains p50/p95 latency.
+  Output occurs only after evaluation and owned temporary resources finish.
+  Schema, examples and limits are in `guides/RAG_EVALUATION.md`; the design
+  decision is in `docs/ARCHITECTURE.md`.
+- Orca Run `run_19814b29a973`: OMP `zai/glm-5.3` low implemented Task
+  `task_3238ecc15eff` / Dispatch `ctx_f881a3c88888`; coordinator corrections
+  continued under `task_99428b383704` / `ctx_8c74612f6d58`. Coordinator made
+  small final language-normalization and output-order fixes. Grok 4.6 medium
+  independently reviewed the final diff under `task_d9c3f0d3156f` /
+  `ctx_d146ba1413d0`: no findings. All completions recovered and acknowledged.
+  Release reported externally created terminals retained, so the coordinator
+  explicitly closed both task-owned custom-argv tabs; PTY exits were confirmed.
+- Coordinator verification: **211 tests run, 208 passed, 3 optional PostgreSQL
+  skips**, no failures. Nexus fixture dry-run passed; all five RAG variants ran
+  over 11 queries, preserved the one intentional cross-project case, and two
+  detailed CLI runs were byte-identical. Documentation example metrics,
+  existing doctor environment checks, and `git diff --check` passed.
+- Synthetic local/SQLite/fake-pipeline evidence only. No real company, Jira,
+  in-house provider, OpenSearch, BGE or PostgreSQL validation; no adoption or
+  quality-threshold claim. No installs or push. The user subsequently authorized
+  autonomous commits; this verified slice and the preserved pre-existing
+  handoff-only changes are included in the local evaluation-reporting commit.
+- User asked to balance Luna, GLM, Grok and Claude Sonnet usage across work,
+  with model/effort chosen by the coordinator. Use bounded implementation and
+  review roles according to task complexity; Grok medium for narrow reviews,
+  high/Sonnet when deeper judgment is warranted. This slice used GLM plus
+  Grok; future slices should distribute suitable work to Luna/Sonnet too.
+
+## Start next session: external onboarding preparation (user agreed)
+
+- User agreed to continue the following work **next session**, not in this
+  session. Company data cannot be shared externally; use synthetic inputs only.
+- Current publication baseline: `734b30f` is committed and pushed to `origin/main`
+  (ranking calibration and internal onboarding pack, plus the seven earlier
+  local commits). The working tree was clean before this handoff-only update.
+- **First slice: evaluation execution and reporting automation.** Inspect and
+  reuse `rag/eval.py`, `rag/__main__.py`, and the existing golden-set validation
+  before adding anything. Produce a runnable internal-operator path for the five
+  retrieval variants, aggregate and language/cross-project subset metrics, and
+  misses/failure cases. Define the smallest necessary input/report contract;
+  validate it with synthetic data. Preserve the intentional cross-project golden
+  case and existing metric semantics. Acceptance: reproducible reports, explicit
+  invalid-input failures, and honest fixture-only status; no fabricated quality
+  threshold or claim that a synthetic run passes the production adoption gate.
+- **Second slice: onboarding preflight automation.** Extend/reuse the existing
+  `scripts/doctor.py` where appropriate: environment, selected configuration,
+  required files, and actionable pass/hold results. Never print secret values or
+  claim that static checks prove real auth, ACL, provider containment, or quality.
+- **Third slice: local real-backend verification.** Exercise existing OpenSearch
+  and PostgreSQL adapters with synthetic data, including connection/failure and
+  restore/rollback cases. Clearly separate local backend evidence from real
+  company integration. Inspect installed tooling first; install only what the
+  chosen bounded slice needs under the user's existing installation authority.
+- Later supporting work: synthetic ACL scenarios (principal differences,
+  restricted comments, revocation/deletion) and reproducible dependency/import
+  preparation (selected versions, hashes, licenses, installation procedure).
+  These are follow-ups, not a request to implement all slices simultaneously.
+- Jira read-adapter implementation needs non-sensitive Jira flavor/auth/interface
+  decisions first. Do not invent company settings. Nexus↔RAG adoption and real
+  Jira writes remain behind the existing evaluation and separate write gates.
+- Read `guides/COMPANY_ONBOARDING.md`, its checklist, and only relevant indexed
+  contracts. Follow `voc-slice`: one bounded implementation worker through live
+  Orca Run→Task→Dispatch, Luna Max or GLM 5.3 as appropriate; coordinator owns
+  scope/review/final verification. Research reusable OSS before introducing a
+  new base harness. Preserve existing work and recover/release each worker.
+- Last full verification (before this documentation-only update): 192 tests run,
+  189 passed, 3 optional PostgreSQL skips; onboarding shell smoke, doctor, 61
+  local links/fragments, and diff check passed. No live company validation.
+
 ## Publication checkpoint and remaining scope (2026-09-12)
 
 - User authorized committing and pushing the ranking calibration and onboarding
@@ -845,6 +930,11 @@
 - Worker/task/run cleaned up (`worker-release`, `task-update --status completed`).
 
 ## Next steps
+
+- **Current next-session priority:** evaluation reporting is complete locally;
+  continue with onboarding preflight automation, then local backend checks,
+  as scoped at the top of this file. These can proceed without company data; #10's
+  adoption gate below does not block those independent preparation slices.
 
 - **Issues #8 and #4 are now implemented, merged, and closed** (see their "implemented"
   entries above; PR #15 `ba19d0a` for #8, commit `5a6d7b3` for #4).

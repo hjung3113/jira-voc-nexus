@@ -126,6 +126,9 @@ k=10** regardless of `ks` -- matching the fixed schema
 python3 -m rag eval --fixtures-dir fixtures/rag --golden <path-to-your-golden-set.json> [--json]
 ```
 
+Add `--report detailed` for the deterministic subset/per-query report
+(see the next section).
+
 Or programmatically, against your own corpus (real ingested documents, not
 just the fixtures):
 
@@ -154,6 +157,89 @@ instances (built once from your document corpus) -- the differences
 between rows are purely in what each variant's `RetrievalPipeline` wiring
 does with those same indexes, so the comparison isolates each component's
 marginal contribution.
+
+## Detailed subset report (opt-in, local-only)
+
+`python3 -m rag eval --report detailed` (same `--fixtures-dir`/`--golden`
+arguments as above) prints a deterministic JSON report that extends the
+aggregate run with the subset breakdowns the adoption-gate list asks for,
+computed from the **same retrieval runs** as the aggregate numbers -- there
+is no second pass over the golden set:
+
+```json
+{
+  "<variant-name>": {
+    "aggregate": {"count": 2, "recall@5": 0.75, "recall@10": 1.0, "mrr@10": 0.75, "ndcg@10": 0.803},
+    "subsets": {
+      "language": {
+        "ko": {"count": 1, "recall@5": 1.0, "recall@10": 1.0, "mrr@10": 1.0, "ndcg@10": 1.0},
+        "unknown": {"count": 1, "recall@5": 0.5, "recall@10": 1.0, "mrr@10": 0.5, "ndcg@10": 0.605}
+      },
+      "error_code": {"count": 0, "recall@5": null, "recall@10": null, "mrr@10": null, "ndcg@10": null},
+      "cross_project": {"count": 1, "recall@5": 1.0, "recall@10": 1.0, "mrr@10": 1.0, "ndcg@10": 1.0}
+    },
+    "queries": [
+      {"query_index": 0, "text": "결제 중복", "language": "ko", "project": "PAY",
+       "relevant_doc_ids": ["OPS-201:problem"],
+       "ranked_doc_ids": ["OPS-201:problem", "OPS-102:problem"],
+       "missing_relevant_doc_ids_by_cutoff": {"5": [], "10": []},
+       "recall@5": 1.0, "recall@10": 1.0, "mrr@10": 1.0, "ndcg@10": 1.0},
+      {"query_index": 1, "text": "parser aborts", "language": "unknown", "project": "OPS",
+       "relevant_doc_ids": ["OPS-300:problem", "OPS-301:problem"],
+       "ranked_doc_ids": ["OPS-102:problem", "OPS-300:problem", "OPS-999:problem",
+                          "OPS-103:problem", "OPS-104:problem", "OPS-301:problem"],
+       "missing_relevant_doc_ids_by_cutoff": {"5": ["OPS-301:problem"], "10": []},
+       "recall@5": 0.5, "recall@10": 1.0, "mrr@10": 0.5, "ndcg@10": 0.605}
+    ]
+  }
+}
+```
+
+(A tiny illustrative two-query example, not real fixture output. Query 1's
+relevant doc is in another project (`cross_project`); query 2's second
+relevant doc ranks 6th, so it appears under cutoff `"5"` but not `"10"` --
+making the `recall@5` miss directly readable from the report.)
+
+
+- Every metric block carries exactly `count` plus `recall@5`, `recall@10`
+  (or the `ks` passed programmatically), `mrr@10`, `ndcg@10`. A subset with
+  `count: 0` reports `null` for every metric key rather than a fabricated 0.
+- Aggregate, subset, and per-query numbers all come from the same
+  retrieval runs: the shared internal core runs `retrieve` exactly once
+  per golden query per variant, and both report paths consume that one run.
+- **Latency is intentionally absent** from the detailed report so the output
+  is byte-for-byte deterministic across runs; latency stays in the default
+  aggregate report only.
+- **Language metadata is optional and strictly validated.** A golden-set
+  entry may carry `"language": "ko"` (any non-blank string, in the JSON
+  loader and in programmatically constructed `GoldenEntry`s alike). When
+  absent, the report says `"unknown"` explicitly -- it never guesses from
+  query text, and language subsets only contain the labels actually present
+  in the golden set (including `"unknown"`).
+- **Error-code subset**: queries whose `error_codes` list is non-empty.
+- **Cross-project subset**: a query qualifies only when its own `project`
+  is non-empty **and** at least one relevant document has a non-empty,
+  different `project` field. Relevant documents with an empty `project`
+  (unknown provenance, e.g. wiki pages) are never asserted to be
+  cross-project.
+- Each `queries` row carries `query_index` (position in the golden set),
+  `relevant_doc_ids`, `ranked_doc_ids` (to the same depth as the aggregate
+  run, i.e. `max(10, ks)`), and `missing_relevant_doc_ids_by_cutoff`:
+  relevant IDs absent from the top `k` for every configured recall cutoff
+  plus 10 -- so a rank-6 relevant doc shows up as a clear `recall@5` miss
+  while being present at cutoff 10.
+- Failures (invalid golden set, unknown/duplicate result IDs, blank query
+  text, relevance IDs outside the corpus) raise before any output is
+  printed; variant cleanup still runs, and the CLI exits nonzero with no
+  partial report on stdout.
+
+The same report is available programmatically via
+`rag.eval.run_detailed_evaluation(variants, golden)` (same input validation
+as `run_evaluation`). This is a local-only operator convenience: it makes
+the subset numbers reproducible and auditable, but it does **not** add any
+quality threshold or pass/fail judgment -- the >= 100-query, ACL-leakage,
+and adoption-gate criteria in this guide are unchanged, and a synthetic
+run remains harness smoke evidence only.
 
 ## Same-project boost calibration (local fixture only)
 

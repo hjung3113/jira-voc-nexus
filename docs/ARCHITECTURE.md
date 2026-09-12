@@ -614,6 +614,27 @@ Decision (b) is not an implementation item at all until issue #10 is
 designed and a concrete retrieval-signal use for `IndexDocument.labels` is
 chosen then.
 
+## Evaluation report automation (first onboarding slice, implemented 2026-09-12)
+
+**Decision:** extend the existing `rag/eval.py` harness rather than add a
+new harness or dependency. `run_evaluation` and the default
+`python3 -m rag eval` aggregate output (6 metric keys per variant,
+including latency) are unchanged. A new opt-in
+`rag.eval.run_detailed_evaluation` / `python3 -m rag eval --report
+detailed` computes aggregate, language / error-code / cross-project
+subset, and per-query (ranked IDs, missing relevant IDs, metrics) blocks
+from the same retrieval runs as the aggregate, with latency deliberately
+excluded so the JSON is deterministic. Golden-set entries gained a
+strictly validated optional `language` string; absence is reported as
+explicit `"unknown"`, never inferred from text. Cross-project membership
+is derived only from non-empty query and relevant-document `project`
+fields -- unknown provenance (empty `project`) is never asserted
+cross-project. Empty subsets report `count: 0` with `null` metrics; all
+input/result validations fail closed before any output. This adds no
+quality threshold and makes no adoption claim; the RAG_DESIGN evaluation
+gate is unchanged. Schema and limits:
+[guides/RAG_EVALUATION.md](../guides/RAG_EVALUATION.md#detailed-subset-report-opt-in-local-only).
+
 ## OpenCode boundary
 
 For each new event with evidence, the adapter runs exactly one OpenCode

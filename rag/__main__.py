@@ -6,7 +6,7 @@ not something exposed here.
 
     python3 -m rag index --fixtures-dir fixtures/rag --state .local/rag/state.json
     python3 -m rag query --state .local/rag/state.json --text "<q>" [--project P] [--error-code E]... [--json]
-    python3 -m rag eval  --fixtures-dir fixtures/rag --golden fixtures/rag/golden_set.json [--json]
+    python3 -m rag eval  --fixtures-dir fixtures/rag --golden fixtures/rag/golden_set.json [--json] [--report aggregate|detailed]
 """
 
 from __future__ import annotations
@@ -30,7 +30,13 @@ from .contracts import (
     wiki_to_document,
 )
 from .errors import RagInputError
-from .eval import default_local_variants, load_golden_set, render_markdown_table, run_evaluation
+from .eval import (
+    default_local_variants,
+    load_golden_set,
+    render_markdown_table,
+    run_detailed_evaluation,
+    run_evaluation,
+)
 from .registry import KnowledgeRegistry, SqliteKnowledgeRegistry
 from .retrieval import (
     HashingEmbedding,
@@ -262,11 +268,19 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             # run_evaluation closes that owned connection via its variant
             # cleanup callback.
             variants = default_local_variants(documents, registry_db_path)
-            report = run_evaluation(variants, golden)
+            if args.report == "detailed":
+                # Deterministic opt-in path: no latency values; subset
+                # counts and per-query misses included. Failures raise
+                # before any output is printed.
+                report = run_detailed_evaluation(variants, golden)
+            else:
+                report = run_evaluation(variants, golden)
         finally:
             seed_registry.close()
 
-    if args.json:
+    if args.report == "detailed":
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    elif args.json:
         print(json.dumps(report, indent=2))
     else:
         print(render_markdown_table(report))
@@ -296,6 +310,13 @@ def _build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--fixtures-dir", required=True)
     eval_parser.add_argument("--golden", required=True)
     eval_parser.add_argument("--json", action="store_true")
+    eval_parser.add_argument(
+        "--report", choices=("aggregate", "detailed"), default="aggregate",
+        help="aggregate: legacy 6-key per-variant metrics (default). "
+             "detailed: deterministic per-variant JSON with aggregate and "
+             "language/error-code/cross-project subset counts and metrics "
+             "plus per-query ranked/missing IDs (no latency).",
+    )
     eval_parser.set_defaults(handler=_cmd_eval)
 
     return parser
