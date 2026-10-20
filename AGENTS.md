@@ -44,7 +44,7 @@
 - Orca coordination reads the live guide from the installed `orca-cli` / `orchestration` skill and runs Run → Task → Dispatch → completion retrieval. Do not substitute another spawn mechanism.
 - Split file ownership in shared checkouts, and run final verification only after changes have stabilized. A finishing worker releases per the guide.
 - After a task completes, close that task's tab and start new work in a new session/tab. Keep and reuse context only for work that is a direct continuation of the same task, such as fixing or re-verifying it. Do not close unrelated tabs you don't own.
-- Default implementation: Codex `gpt-5.6-luna` max or OMP GLM 5.3 low. Complex implementation: GLM high / Claude Sonnet medium→high. Narrow review: Grok 4.6 low→medium; hard review: high. Design/final judgment: Codex GPT-6 Astra low→medium.
+- Default implementation: Codex `gpt-6-luna` max or OMP GLM 5.3 low. Complex implementation: GLM high / Claude Sonnet medium→high. Narrow review: Grok 4.6 low→medium; hard review: high. Design/final judgment: Codex GPT-6 Astra low→medium.
 - The above are user-specified model preferences, not guaranteed provider IDs. Before running, check the ID and effort support in that CLI's model list/help. Never print credentials.
 - GLM 5.3 uses the user's connected Z.AI API path, OMP `zai/glm-5.3`. Do not switch to the OpenRouter GLM path. Use the existing auth; never print or copy keys into the repository.
 - Scope each worker's input to the documents/scope/completion conditions it actually needs. Do not re-review the entire repo for every small edit, and do not run the same task redundantly across multiple models.
